@@ -1822,17 +1822,18 @@ def _apply_and_check(ctx, link):
         if not applied:
             # Zero commits, or branch missing because apply was interrupted
             success = False
-        elif applied != ctx.patch_count:
-            tout.error(f'Only {applied} of {ctx.patch_count} patches '
-                       f'applied to {ctx.branch_name}; aborting. Fix the '
-                       'conflicts manually and retry.')
-            success = False
 
     if not success:
         tout.error('Failed to apply patches to branch')
         ctx.cser.db.ser_ver_remove(ctx.series_id, ctx.version)
         ctx.cser.commit()
         return False
+    if applied != ctx.patch_count:
+        # Common with kernel-import series: the agent legitimately skips
+        # patches that are already applied upstream. Warn and proceed
+        # rather than discarding the apply
+        tout.warning(f'Only {applied} of {ctx.patch_count} patches applied '
+                     f'to {ctx.branch_name}; reviewing what is there')
     tout.notice(f'Patches applied to branch: {ctx.branch_name}')
     return True
 
