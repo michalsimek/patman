@@ -230,6 +230,7 @@ def add_series_subparser(subparsers):
     series.defaults_cmds = [
         ['set-link', 'fred'],
         ['find', 'dummy'],
+        ['changes', 'dummy'],
     ]
     series.add_argument(
         '-n', '--dry-run', action='store_true', dest='dry_run', default=False,
@@ -277,6 +278,15 @@ def add_series_subparser(subparsers):
                       help='Update the branch commits (default)')
     aall.add_argument('--no-update', action='store_false', dest='update',
                       help='Do not update the branch commits')
+
+    chg = series_subparsers.add_parser(
+        'changes',
+        help='Add a Series-changes / Cover-changes bullet to the HEAD '
+             'commit and amend it')
+    chg.add_argument('text', help='Bullet text')
+    chg.add_argument('-c', '--cover', action='store_true',
+                     help='Use Cover-changes (cover-letter only) instead '
+                          'of Series-changes')
 
     series_subparsers.add_parser('dec')
 

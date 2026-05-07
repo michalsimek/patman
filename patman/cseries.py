@@ -8,8 +8,11 @@
 import asyncio
 from collections import OrderedDict, defaultdict
 import os
+import re
+
 import pygit2
 
+from u_boot_pylib import command
 from u_boot_pylib import cros_subprocess
 from u_boot_pylib import gitutil
 from u_boot_pylib import terminal
@@ -24,6 +27,67 @@ from patman.cser_helper import AUTOLINK, oid
 from patman import send
 from patman import status
 from patman import workflow
+
+
+_TRAILER_RE = re.compile(r'^[A-Za-z][A-Za-z0-9-]*:\s')
+
+
+def _add_change_tag(message, version, text, cover=False):
+    """Insert or extend a Series-changes / Cover-changes block
+
+    The block is placed before the trailer (Signed-off-by) block so that
+    'git commit --amend -s' still recognises the existing signoff and
+    does not duplicate it. The required blank line between the block
+    and the trailers is preserved.
+
+    Args:
+        message (str): Existing commit message
+        version (int): Series version number
+        text (str): Bullet text (with or without leading '- ')
+        cover (bool): True for Cover-changes, False for Series-changes
+
+    Return:
+        str: New commit message ending with a single newline
+    """
+    tag = 'Cover-changes' if cover else 'Series-changes'
+    bullet = text.lstrip()
+    if not bullet.startswith('-'):
+        bullet = f'- {bullet}'
+    bullet = bullet.rstrip()
+
+    lines = message.rstrip('\n').split('\n')
+
+    # Identify the trailer block at the end (consecutive 'Word: value' lines,
+    # ignoring blank separators between them)
+    trailer_start = len(lines)
+    for i in range(len(lines) - 1, -1, -1):
+        if not lines[i].strip():
+            continue
+        if _TRAILER_RE.match(lines[i]):
+            trailer_start = i
+        else:
+            break
+
+    # Reuse an existing block of the same kind/version if present
+    block_re = re.compile(rf'^{re.escape(tag)}:\s*{version}\s*$')
+    for i in range(trailer_start):
+        if block_re.match(lines[i]):
+            j = i + 1
+            while j < len(lines) and lines[j].lstrip().startswith('-'):
+                j += 1
+            return '\n'.join(lines[:j] + [bullet] + lines[j:]) + '\n'
+
+    # No existing block: insert a new one just before the trailer block
+    body_end = trailer_start
+    while body_end > 0 and not lines[body_end - 1].strip():
+        body_end -= 1
+    body = lines[:body_end]
+    trailers = lines[trailer_start:]
+    new_block = [f'{tag}: {version}', bullet]
+    out = body + [''] + new_block
+    if trailers:
+        out += [''] + trailers
+    return '\n'.join(out) + '\n'
 
 
 class Cseries(cser_helper.CseriesHelper):
@@ -912,6 +976,42 @@ class Cseries(cser_helper.CseriesHelper):
         tout.notice(f"Renamed series '{series}' to '{name}'")
         if dry_run:
             tout.info('Dry run completed')
+
+    def add_change(self, series, version, text, cover=False, dry_run=False):
+        """Add a Series-changes / Cover-changes bullet to the HEAD commit
+
+        Reads HEAD's commit message, inserts the bullet into an existing
+        block for this version (or creates one), then runs
+        'git commit --amend' to fold both the message change and any
+        staged code changes in a single step. Typical use:
+
+            git add <files>
+            patman s changes 'fix the offset calculation'
+
+        Args:
+            series (str): Series name, or None for current branch
+            version (int or None): Version for the tag (defaults to the
+                current series version)
+            text (str): Bullet text
+            cover (bool): True for Cover-changes (cover-letter only),
+                False for Series-changes
+            dry_run (bool): True to print the resulting message instead
+                of amending
+        """
+        _, ver = self._parse_series_and_version(series, version)
+        old_msg = command.output(
+            'git', '-C', self.topdir, 'log', '-1', '--format=%B').rstrip()
+        new_msg = _add_change_tag(old_msg, ver, text, cover=cover)
+
+        if dry_run:
+            print(new_msg)
+            return
+
+        command.output(
+            'git', '-C', self.topdir, 'commit', '--amend', '-F', '-',
+            stdin_data=new_msg)
+        tag = 'Cover-changes' if cover else 'Series-changes'
+        tout.notice(f"Added '{tag}: {ver}' bullet to HEAD")
 
     def save_notes(self, series, notes_file='review-notes.txt'):
         """Save review-handling notes for the current series version
