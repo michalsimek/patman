@@ -63,6 +63,8 @@ class ReviewContext:  # pylint: disable=R0902
         patch_count (int or None): Number of patches
         patch_selection (set of int or None): Patch indices to review
             (None means all)
+        context (str or None): Extra user-supplied context to pass to
+            the review agent (e.g. 'this is RFC, ignore whitespace')
     """
 
     def __init__(self, pwork, cser, series_data):
@@ -86,6 +88,7 @@ class ReviewContext:  # pylint: disable=R0902
         self.cover_content = None
         self.previous_reviews = {}
         self.diffstat = None
+        self.context = None
 
     @property
     def reviewer_tag(self):
@@ -248,6 +251,22 @@ async def apply_series(pwork, link, branch_name, upstream_branch,
     return success, branch_name
 
 
+def _read_context(spec):
+    """Resolve a --context argument value to literal text
+
+    Args:
+        spec (str): Either a literal string, or '@path' to read from
+            a file (path is expanded for '~')
+
+    Return:
+        str: The context text to pass to the agent
+    """
+    if spec.startswith('@'):
+        path = os.path.expanduser(spec[1:])
+        return tools.read_file(path, binary=False).rstrip()
+    return spec
+
+
 def _build_review_prompt(ctx, commit_hash, seq, all_commits,
                          previous_review):
     """Build the Claude agent prompt for reviewing a single patch
@@ -311,6 +330,13 @@ author has already been told. Simply skip that issue entirely and focus
 on things that have NOT been said.
 '''
 
+    context_section = ''
+    if ctx.context:
+        context_section = f'''
+USER CONTEXT (extra notes from the reviewer for this run):
+{ctx.context}
+'''
+
     return f'''You are an experienced U-Boot developer reviewing \
 a patch submitted to
 the U-Boot mailing list. This is patch {seq}/{len(all_commits)} in the series.
@@ -348,7 +374,7 @@ IMPORTANT:
    - Commit message quality: Is it clear, using present/imperative
      tense? Does it explain the motivation?
    - API usage: Are U-Boot APIs used correctly?
-{cover_section}{prev_section}
+{cover_section}{prev_section}{context_section}
 OUTPUT FORMAT:
 Your response MUST use this exact structured format, with no other text
 before or after. Start with a GREETING line containing the patch
@@ -465,6 +491,13 @@ EXISTING COMMENTS:
 (see file: {ctx.comments_path})
 '''
 
+    context_section = ''
+    if ctx.context:
+        context_section = f'''
+USER CONTEXT (extra notes from the reviewer for this run):
+{ctx.context}
+'''
+
     return f'''You are an experienced U-Boot developer reviewing a patch series
 submitted to the U-Boot mailing list. Review the series as a whole,
 replying to the cover letter.
@@ -473,7 +506,7 @@ SERIES ({len(all_commits)} patches):
 {series_overview}
 
 You can run 'git show <hash>' on any of these to see the full diff.
-{cover_section}{comments_section}
+{cover_section}{comments_section}{context_section}
 TASK:
 1. Read through all the patches (use 'git show <hash>' for each)
 2. Review the series for:
@@ -1994,6 +2027,7 @@ def do_review(args, pwork, cser):
     if ctx.signoff:
         ctx.signoff = ctx.signoff.replace('\\n', '\n')
     ctx.spelling = args.spelling
+    ctx.context = _read_context(args.context) if args.context else None
     ctx.comments_path = _write_comments_file(series_data, pwork)
 
     _run_and_store_reviews(ctx, args)

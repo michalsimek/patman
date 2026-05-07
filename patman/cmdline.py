@@ -620,6 +620,10 @@ def add_review_subparser(subparsers):
     review.add_argument(
         '-f', '--force', action='store_true',
         help='Force re-review even if the series was already reviewed')
+    review.add_argument(
+        '-c', '--context', type=str, default=None,
+        help="Extra context for the review agent — e.g. 'this is RFC, "
+             "ignore whitespace'. Use '@path' to read from a file.")
     return review
 
 
