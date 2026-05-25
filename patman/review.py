@@ -295,8 +295,22 @@ SERIES CONTEXT (cover letter):
 PREVIOUS REVIEW (from earlier version):
 {previous_review}
 
-Consider whether the issues raised in the previous review have been
-addressed in this version.
+This is a FOLLOW-UP review. The reviewer convention is that the
+initial review says what needs to be said; later versions should not
+pile on with fresh nits the reviewer chose not to raise the first
+time round. Apply that convention here:
+
+- Confirm whether each point in the previous review was addressed
+  (acknowledge it, or push back if it was not).
+- Do NOT raise new issues in code that already existed in the
+  previous version. If something was not flagged then, it is not
+  fair to flag it now.
+- It IS fair to comment on:
+  * material the author added or substantially rewrote in this
+    version (whether in response to feedback or otherwise), and
+  * clear regressions introduced since the previous version.
+- If the previous feedback is addressed and nothing new is wrong,
+  approve. Prefer 'approved' over fishing for something to say.
 '''
 
     voice = get_voice()
@@ -453,13 +467,15 @@ Rules:
 '''
 
 
-def _build_cover_review_prompt(ctx, all_commits):
+def _build_cover_review_prompt(ctx, all_commits, previous_review=None):
     """Build prompt for reviewing the cover letter / series
 
     Args:
         ctx (ReviewContext): Review context (uses cover_content,
             comments_path, spelling)
         all_commits (list of tuple): (seq, hash, subject) for all patches
+        previous_review (str or None): Previous cover-letter review text
+            (for v2+ reviews)
 
     Returns:
         str: The prompt text
@@ -498,6 +514,21 @@ USER CONTEXT (extra notes from the reviewer for this run):
 {ctx.context}
 '''
 
+    prev_section = ''
+    if previous_review:
+        prev_section = f'''
+PREVIOUS COVER-LETTER REVIEW (from earlier version):
+{previous_review}
+
+This is a FOLLOW-UP review. The reviewer convention is that the
+initial review says what needs to be said; later versions should not
+pile on with fresh nits the reviewer chose not to raise the first
+time round. Confirm whether the previous points were addressed,
+comment only on material that is new or substantially reworked in
+this version, and prefer VERDICT: skip when there is nothing new to
+add at the series level.
+'''
+
     return f'''You are an experienced U-Boot developer reviewing a patch series
 submitted to the U-Boot mailing list. Review the series as a whole,
 replying to the cover letter.
@@ -506,7 +537,7 @@ SERIES ({len(all_commits)} patches):
 {series_overview}
 
 You can run 'git show <hash>' on any of these to see the full diff.
-{cover_section}{comments_section}{context_section}
+{cover_section}{comments_section}{context_section}{prev_section}
 TASK:
 1. Read through all the patches (use 'git show <hash>' for each)
 2. Review the series for:
@@ -1036,7 +1067,8 @@ async def _review_cover_letter(ctx, all_commits):
         str or None: Review body, or None if skipped
     """
     tout.notice('Reviewing series (cover letter)...')
-    prompt = _build_cover_review_prompt(ctx, all_commits)
+    prompt = _build_cover_review_prompt(
+        ctx, all_commits, previous_review=ctx.previous_reviews.get(0))
     options = ClaudeAgentOptions(
         allowed_tools=['Bash', 'Read', 'Grep'], cwd=ctx.repo_path,
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
