@@ -3751,9 +3751,16 @@ Date:   .*
         self.assertEqual('2:457 1:456', series.links)
         self.assertEqual('3', series.version)
 
+        # Use a hermetic get_maintainer stub backed by a fixture
+        # MAINTAINERS file, so the maintainer Cc does not depend on
+        # running inside a real U-Boot tree
+        get_maint = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), 'test',
+            'get_maintainer')
         with terminal.capture() as (out, err):
             self.run_args('series', '-n', '-s', 'second3', 'send',
-                          '--no-autolink', pwork=pwork)
+                          '--no-autolink', '--get-maintainer-script',
+                          get_maint, pwork=pwork)
         self.assertIn('Send a total of 3 patches with a cover letter',
                       out.getvalue())
         self.assertIn(

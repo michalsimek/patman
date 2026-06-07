@@ -1,0 +1,11 @@
+Video
+M:	Anatolij Gustschin <ag.dev.uboot@gmail.com>
+F:	video.c
+
+Serial
+M:	Serial Person <serial.person@example.com>
+F:	serial.c
+
+Bootm
+M:	Boot Person <boot.person@example.com>
+F:	bootm.c

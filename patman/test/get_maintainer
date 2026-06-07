@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0+
+"""Minimal get_maintainer.pl-compatible stub for the patman tests
+
+It reads the fixture MAINTAINERS file ('maintainers') sitting alongside
+this script and prints, one per line, the maintainer addresses for the
+files touched by the patch named on the command line. Using it keeps
+test_series_send hermetic, so it does not depend on a real U-Boot tree
+with scripts/get_maintainer.pl and a top-level MAINTAINERS file.
+"""
+
+import os
+import re
+import sys
+
+
+def parse_maintainers(text):
+    """Parse a MAINTAINERS-style file into (emails, patterns) entries
+
+    Args:
+        text (str): Contents of the MAINTAINERS file
+
+    Return:
+        list of tuple: Each entry is (list of M: addresses, list of F:
+            path patterns) for one block
+    """
+    entries = []
+    emails, patterns = [], []
+    for line in text.splitlines():
+        if line.startswith('M:'):
+            emails.append(line[2:].strip())
+        elif line.startswith('F:'):
+            patterns.append(line[2:].strip())
+        elif not line.strip():
+            if emails or patterns:
+                entries.append((emails, patterns))
+            emails, patterns = [], []
+    if emails or patterns:
+        entries.append((emails, patterns))
+    return entries
+
+
+def main(patch_fname):
+    """Print the maintainers for the files touched by a patch
+
+    Args:
+        patch_fname (str): Filename of the patch to inspect
+    """
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    with open(os.path.join(script_dir, 'maintainers'), encoding='utf-8') as fd:
+        entries = parse_maintainers(fd.read())
+    with open(patch_fname, encoding='utf-8') as fd:
+        touched = re.findall(r'^\+\+\+ b/(.*)$', fd.read(), re.MULTILINE)
+
+    out = []
+    for emails, patterns in entries:
+        for fname in touched:
+            if any(fname == pat or fname.startswith(pat.rstrip('/') + '/')
+                   for pat in patterns):
+                out += [email for email in emails if email not in out]
+                break
+    print('\n'.join(out))
+
+
+if __name__ == '__main__':
+    main(sys.argv[-1])
