@@ -8,7 +8,7 @@ version = "0.0.7"
 authors = [
   { name="Simon Glass", email="sjg@chromium.org" },
 ]
-dependencies = ["u_boot_pylib >= 0.0.6", "aiohttp >= 3.9.1" ]
+dependencies = ["aiohttp >= 3.9.1", "concurrencytest" ]
 description = "Patman patch manager"
 readme = "README.rst"
 requires-python = ">=3.7"
@@ -26,7 +26,7 @@ classifiers = [
 patman = "patman.__main__:run_patman"
 
 [tool.setuptools]
-packages = ["patman"]
+packages = ["patman", "u_boot_pylib"]
 
 [tool.setuptools.package-data]
 patman = ["*.rst", "test/*"]
