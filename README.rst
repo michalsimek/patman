@@ -1,1 +1,1 @@
-patman.rst
+patman/patman.rst

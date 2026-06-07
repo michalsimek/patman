@@ -58,8 +58,7 @@ class TestFunctional(unittest.TestCase, TestCommon):
     def setUp(self):
         TestCommon.setUp(self)
         self.repo = None
-        self._patman_pathname = sys.argv[0]
-        self._patman_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+        self._patman_pathname = os.path.realpath(sys.argv[0])
 
     def tearDown(self):
         TestCommon.tearDown(self)
@@ -476,7 +475,7 @@ Changes in v2:
 
             # Finally, do the test
             with terminal.capture():
-                output = tools.run(PATMAN_DIR / 'patman', '--dry-run')
+                output = tools.run(self._patman_pathname, '--dry-run')
                 # Assert the email address is part of the dry-run
                 # output.
                 self.assertIn('hello@there.com', output)
@@ -637,7 +636,7 @@ diff --git a/lib/efi_loader/efi_memory.c b/lib/efi_loader/efi_memory.c
         """Test getting full help"""
         command.TEST_RESULT = None
         result = self.run_patman('-H')
-        help_file = os.path.join(self._patman_dir, 'README.rst')
+        help_file = str(PATMAN_DIR / 'patman.rst')
         # Remove possible extraneous strings
         extra = '::::::::::::::\n' + help_file + '\n::::::::::::::\n'
         gothelp = result.stdout.replace(extra, '')

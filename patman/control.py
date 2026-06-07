@@ -455,7 +455,7 @@ def do_patman(args, test_db=None, pwork=None, cser=None):
             or None to create one
     """
     if args.full_help:
-        with resources.path('patman', 'README.rst') as readme:
+        with resources.path('patman', 'patman.rst') as readme:
             tools.print_full_help(str(readme))
         return 0
     if args.cmd == 'send':

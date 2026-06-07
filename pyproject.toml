@@ -25,5 +25,8 @@ classifiers = [
 [project.scripts]
 patman = "patman.__main__:run_patman"
 
+[tool.setuptools]
+packages = ["patman"]
+
 [tool.setuptools.package-data]
-patman = ["*.rst"]
+patman = ["*.rst", "test/*"]
