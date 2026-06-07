@@ -37,9 +37,11 @@ jobs:
           git config --global user.email 'ci@example.com'
 
       # checkpatch.pl (vendored in scripts/) needs perl, which is present
-      # on the runner. The suite is otherwise self-contained.
+      # on the runner. The suite is otherwise self-contained. Invoke the
+      # installed console script (not 'python -m patman') so argv[0] is
+      # 'patman', which a couple of help/usage tests assert.
       - name: Run the test suite
-        run: python -m patman test
+        run: patman test
 
   package:
     name: Build and check the package
