@@ -74,6 +74,13 @@ The suite is self-contained: a pinned ``checkpatch.pl`` and its helper files
 live in ``scripts/``, and the bundled ``u_boot_pylib`` package is vendored in
 the tree, so no surrounding U-Boot source is required.
 
+Build the documentation locally with::
+
+    pip install -r doc/requirements.txt
+    make -C doc html
+
+The rendered HTML is written to ``doc/_build/html``.
+
 License
 -------
 

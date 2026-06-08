@@ -30,7 +30,7 @@ Building the documentation
 ::
 
     pip install -r doc/requirements.txt
-    sphinx-build -b html doc doc/_build/html
+    make -C doc html        # output in doc/_build/html
 
 The manual itself lives in ``patman/patman.rst``; ``doc/`` only wraps it
 for Sphinx, so edit the manual there.
