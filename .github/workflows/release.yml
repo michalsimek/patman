@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/patch-manager/
+      url: https://test.pypi.org/project/binary-manager/
     permissions:
       id-token: write
     steps:
@@ -77,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/patch-manager/
+      url: https://pypi.org/project/binary-manager/
     permissions:
       id-token: write
     steps:

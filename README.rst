@@ -5,16 +5,16 @@ Patman patch manager
    :target: https://github.com/nxtboot/patman/actions/workflows/test.yml
    :alt: Test status
 
-.. image:: https://img.shields.io/pypi/v/patch-manager.svg
-   :target: https://pypi.org/project/patch-manager/
+.. image:: https://img.shields.io/pypi/v/binary-manager.svg
+   :target: https://pypi.org/project/binary-manager/
    :alt: PyPI version
 
-.. image:: https://readthedocs.org/projects/patch-manager/badge/?version=latest
-   :target: https://patch-manager.readthedocs.io/en/latest/
+.. image:: https://readthedocs.org/projects/binary-manager/badge/?version=latest
+   :target: https://binary-manager.readthedocs.io/en/latest/
    :alt: Documentation status
 
-.. image:: https://img.shields.io/pypi/pyversions/patch-manager.svg
-   :target: https://pypi.org/project/patch-manager/
+.. image:: https://img.shields.io/pypi/pyversions/binary-manager.svg
+   :target: https://pypi.org/project/binary-manager/
    :alt: Supported Python versions
 
 Patman is a command-line tool that automates the boring parts of preparing
@@ -33,13 +33,13 @@ Installation
 
 Install the latest release from PyPI::
 
-    pip install patch-manager
+    pip install binary-manager
 
 Optional features are available as extras::
 
-    pip install patch-manager[gmail]    # send/fetch review mail via Gmail
-    pip install patch-manager[review]   # AI-assisted patch review
-    pip install patch-manager[all]      # everything
+    pip install binary-manager[gmail]    # send/fetch review mail via Gmail
+    pip install binary-manager[review]   # AI-assisted patch review
+    pip install binary-manager[all]      # everything
 
 The ``patman`` command is then on your path.
 
@@ -59,7 +59,7 @@ Documentation
 
 Full documentation is hosted on Read the Docs:
 
-    https://patch-manager.readthedocs.io/
+    https://binary-manager.readthedocs.io/
 
 Development
 -----------
