@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "patch-manager"
-version = "0.0.8rc1"
+version = "0.0.8"
 authors = [
   { name="Simon Glass", email="sjg@chromium.org" },
 ]
-description = "Patman patch manager"
+description = "Create, check and email patch series, with Patchwork integration"
 readme = "README.rst"
 requires-python = ">=3.9"
 license = "GPL-2.0-or-later"
