@@ -47,7 +47,7 @@ Installation
 
 You can install patman using::
 
-   pip install patch-manager
+   pip install binary-manager
 
 The name is chosen since patman conflicts with an existing package.
 

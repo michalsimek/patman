@@ -3,27 +3,60 @@ requires = ["setuptools>=78.1.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "patch-manager"
-version = "0.0.7"
+name = "binary-manager"
+version = "0.0.8rc1"
 authors = [
   { name="Simon Glass", email="sjg@chromium.org" },
 ]
-dependencies = ["u_boot_pylib >= 0.0.6", "aiohttp >= 3.9.1" ]
 description = "Patman patch manager"
 readme = "README.rst"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
+license = "GPL-2.0-or-later"
+license-files = ["LICENSE"]
+keywords = ["patch", "email", "git", "patchwork", "u-boot", "review"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
     "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Intended Audience :: Developers",
+]
+dependencies = [
+    "pygit2 >= 1.14",
+    "aiohttp >= 3.9",
+]
+
+[project.optional-dependencies]
+# Sending review email and fetching comments via Gmail
+gmail = [
+    "google-api-python-client",
+    "google-auth-httplib2",
+    "google-auth-oauthlib",
+]
+# AI-assisted patch review
+review = ["claude-agent-sdk"]
+# Running the test suite (parallel test execution)
+test = ["concurrencytest"]
+# Everything, for a full-featured install
+all = [
+    "google-api-python-client",
+    "google-auth-httplib2",
+    "google-auth-oauthlib",
+    "claude-agent-sdk",
+    "concurrencytest",
 ]
 
 [project.urls]
-"Homepage" = "https://docs.u-boot.org/en/latest/develop/patman.html"
-"Bug Tracker" = "https://source.denx.de/groups/u-boot/-/issues"
+Homepage = "https://github.com/nxtboot/patman"
+Documentation = "https://binary-manager.readthedocs.io/"
+Repository = "https://github.com/nxtboot/patman"
+"Bug Tracker" = "https://github.com/nxtboot/patman/issues"
 
 [project.scripts]
 patman = "patman.__main__:run_patman"
 
+[tool.setuptools]
+packages = ["patman", "u_boot_pylib"]
+
 [tool.setuptools.package-data]
-patman = ["*.rst"]
+patman = ["*.rst", "test/*"]

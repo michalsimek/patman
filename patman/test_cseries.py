@@ -14,6 +14,7 @@ from unittest import mock
 
 import pygit2
 
+from u_boot_pylib import command
 from u_boot_pylib import cros_subprocess
 from u_boot_pylib import gitutil
 from u_boot_pylib import terminal
@@ -3750,9 +3751,16 @@ Date:   .*
         self.assertEqual('2:457 1:456', series.links)
         self.assertEqual('3', series.version)
 
+        # Use a hermetic get_maintainer stub backed by a fixture
+        # MAINTAINERS file, so the maintainer Cc does not depend on
+        # running inside a real U-Boot tree
+        get_maint = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), 'test',
+            'get_maintainer')
         with terminal.capture() as (out, err):
             self.run_args('series', '-n', '-s', 'second3', 'send',
-                          '--no-autolink', pwork=pwork)
+                          '--no-autolink', '--get-maintainer-script',
+                          get_maint, pwork=pwork)
         self.assertIn('Send a total of 3 patches with a cover letter',
                       out.getvalue())
         self.assertIn(
@@ -5227,6 +5235,91 @@ VERDICT: changes_needed"""
         self.assertEqual(2, len(notes))
         self.assertEqual(1, notes[0][0])
         self.assertEqual(3, notes[1][0])
+
+    def test_add_change_tag_helper(self):
+        """Unit-test the _add_change_tag() message-rewriting helper"""
+        # New block, with a trailer
+        msg = ("Subject\n\nBody.\n\n"
+               "Signed-off-by: Me <me@x>\n")
+        out = cseries._add_change_tag(msg, 2, 'first bullet')
+        self.assertIn(
+            "Series-changes: 2\n- first bullet\n\nSigned-off-by:",
+            out)
+        # Result ends with a single trailing newline
+        self.assertTrue(out.endswith('\n'))
+        self.assertFalse(out.endswith('\n\n'))
+
+        # Append to an existing block of the same version
+        msg = ("Subject\n\nBody.\n\n"
+               "Series-changes: 2\n- existing\n\n"
+               "Signed-off-by: Me\n")
+        out = cseries._add_change_tag(msg, 2, 'second')
+        self.assertIn(
+            "Series-changes: 2\n- existing\n- second\n\nSigned-off-by:",
+            out)
+
+        # New version creates a separate block alongside an existing one
+        msg = ("Subject\n\nBody.\n\n"
+               "Series-changes: 2\n- v2 thing\n\n"
+               "Signed-off-by: Me\n")
+        out = cseries._add_change_tag(msg, 3, 'v3 thing')
+        self.assertIn("Series-changes: 2\n- v2 thing", out)
+        self.assertIn("Series-changes: 3\n- v3 thing", out)
+        # Both blocks sit before the signoff
+        self.assertLess(
+            out.index('Series-changes: 3'), out.index('Signed-off-by:'))
+
+        # cover=True writes Cover-changes instead
+        msg = ("Subject\n\nBody.\n\nSigned-off-by: Me\n")
+        out = cseries._add_change_tag(msg, 2, 'drop X', cover=True)
+        self.assertIn("Cover-changes: 2\n- drop X", out)
+        self.assertNotIn("Series-changes:", out)
+
+        # Pre-prefixed bullet is left as-is (no double dash)
+        msg = ("Subject\n\nBody.\n\nSigned-off-by: Me\n")
+        out = cseries._add_change_tag(msg, 1, '- already a bullet')
+        self.assertIn("- already a bullet", out)
+        self.assertNotIn("- - already", out)
+
+        # Required blank line between bullets and trailers is always present
+        msg = ("Subject\n\nBody.\n\nSigned-off-by: Me\n")
+        out = cseries._add_change_tag(msg, 1, 'x')
+        self.assertIn("- x\n\nSigned-off-by:", out)
+
+    def test_series_changes_cmdline(self):
+        """Test the 'series changes' subcommand via the cmdline"""
+        cser = self.get_cser()
+
+        # Use 'second' (v1 of series 'second') as the working branch
+        gitutil.checkout('second', self.gitdir, work_tree=self.tmpdir,
+                         force=True)
+        with terminal.capture():
+            cser.add('second', allow_unmarked=True, use_commit=True)
+
+        with terminal.capture():
+            self.run_args('series', 'changes', 'fix the offset')
+
+        msg = command.output(
+            'git', '-C', self.tmpdir, 'log', '-1', '--format=%B').strip()
+        self.assertIn('Series-changes: 1', msg)
+        self.assertIn('- fix the offset', msg)
+
+        # A second invocation extends the existing block instead of
+        # creating a duplicate
+        with terminal.capture():
+            self.run_args('series', 'changes', 'and the size')
+        msg = command.output(
+            'git', '-C', self.tmpdir, 'log', '-1', '--format=%B').strip()
+        self.assertEqual(1, msg.count('Series-changes: 1'))
+        self.assertIn('- fix the offset\n- and the size', msg)
+
+        # -c writes a Cover-changes block instead
+        with terminal.capture():
+            self.run_args('series', 'changes', '-c', 'drop NAK-ed patch')
+        msg = command.output(
+            'git', '-C', self.tmpdir, 'log', '-1', '--format=%B').strip()
+        self.assertIn('Cover-changes: 1', msg)
+        self.assertIn('- drop NAK-ed patch', msg)
 
 
 class TestGetUpstreamBranch(unittest.TestCase):

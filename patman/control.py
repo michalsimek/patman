@@ -199,6 +199,9 @@ def do_series(args, test_db=None, pwork=None, cser=None):
                                link_all_versions=args.link_all_versions,
                                replace_existing=args.replace_existing,
                                dry_run=args.dry_run, show_summary=True)
+        elif args.subcmd == 'changes':
+            cser.add_change(args.series, args.version, args.text,
+                            cover=args.cover, dry_run=args.dry_run)
         elif args.subcmd == 'dec':
             cser.decrement(args.series, args.dry_run)
         elif args.subcmd == 'find':
@@ -455,7 +458,7 @@ def do_patman(args, test_db=None, pwork=None, cser=None):
             or None to create one
     """
     if args.full_help:
-        with resources.path('patman', 'README.rst') as readme:
+        with resources.path('patman', 'patman.rst') as readme:
             tools.print_full_help(str(readme))
         return 0
     if args.cmd == 'send':

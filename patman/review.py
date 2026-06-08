@@ -63,6 +63,8 @@ class ReviewContext:  # pylint: disable=R0902
         patch_count (int or None): Number of patches
         patch_selection (set of int or None): Patch indices to review
             (None means all)
+        context (str or None): Extra user-supplied context to pass to
+            the review agent (e.g. 'this is RFC, ignore whitespace')
     """
 
     def __init__(self, pwork, cser, series_data):
@@ -86,6 +88,7 @@ class ReviewContext:  # pylint: disable=R0902
         self.cover_content = None
         self.previous_reviews = {}
         self.diffstat = None
+        self.context = None
 
     @property
     def reviewer_tag(self):
@@ -248,6 +251,22 @@ async def apply_series(pwork, link, branch_name, upstream_branch,
     return success, branch_name
 
 
+def _read_context(spec):
+    """Resolve a --context argument value to literal text
+
+    Args:
+        spec (str): Either a literal string, or '@path' to read from
+            a file (path is expanded for '~')
+
+    Return:
+        str: The context text to pass to the agent
+    """
+    if spec.startswith('@'):
+        path = os.path.expanduser(spec[1:])
+        return tools.read_file(path, binary=False).rstrip()
+    return spec
+
+
 def _build_review_prompt(ctx, commit_hash, seq, all_commits,
                          previous_review):
     """Build the Claude agent prompt for reviewing a single patch
@@ -276,8 +295,22 @@ SERIES CONTEXT (cover letter):
 PREVIOUS REVIEW (from earlier version):
 {previous_review}
 
-Consider whether the issues raised in the previous review have been
-addressed in this version.
+This is a FOLLOW-UP review. The reviewer convention is that the
+initial review says what needs to be said; later versions should not
+pile on with fresh nits the reviewer chose not to raise the first
+time round. Apply that convention here:
+
+- Confirm whether each point in the previous review was addressed
+  (acknowledge it, or push back if it was not).
+- Do NOT raise new issues in code that already existed in the
+  previous version. If something was not flagged then, it is not
+  fair to flag it now.
+- It IS fair to comment on:
+  * material the author added or substantially rewrote in this
+    version (whether in response to feedback or otherwise), and
+  * clear regressions introduced since the previous version.
+- If the previous feedback is addressed and nothing new is wrong,
+  approve. Prefer 'approved' over fishing for something to say.
 '''
 
     voice = get_voice()
@@ -309,6 +342,13 @@ CRITICAL: If another reviewer has already raised a point, do NOT repeat
 it, rephrase it, or elaborate on it — even to add a suggestion. The
 author has already been told. Simply skip that issue entirely and focus
 on things that have NOT been said.
+'''
+
+    context_section = ''
+    if ctx.context:
+        context_section = f'''
+USER CONTEXT (extra notes from the reviewer for this run):
+{ctx.context}
 '''
 
     return f'''You are an experienced U-Boot developer reviewing \
@@ -348,7 +388,7 @@ IMPORTANT:
    - Commit message quality: Is it clear, using present/imperative
      tense? Does it explain the motivation?
    - API usage: Are U-Boot APIs used correctly?
-{cover_section}{prev_section}
+{cover_section}{prev_section}{context_section}
 OUTPUT FORMAT:
 Your response MUST use this exact structured format, with no other text
 before or after. Start with a GREETING line containing the patch
@@ -427,13 +467,15 @@ Rules:
 '''
 
 
-def _build_cover_review_prompt(ctx, all_commits):
+def _build_cover_review_prompt(ctx, all_commits, previous_review=None):
     """Build prompt for reviewing the cover letter / series
 
     Args:
         ctx (ReviewContext): Review context (uses cover_content,
             comments_path, spelling)
         all_commits (list of tuple): (seq, hash, subject) for all patches
+        previous_review (str or None): Previous cover-letter review text
+            (for v2+ reviews)
 
     Returns:
         str: The prompt text
@@ -465,6 +507,28 @@ EXISTING COMMENTS:
 (see file: {ctx.comments_path})
 '''
 
+    context_section = ''
+    if ctx.context:
+        context_section = f'''
+USER CONTEXT (extra notes from the reviewer for this run):
+{ctx.context}
+'''
+
+    prev_section = ''
+    if previous_review:
+        prev_section = f'''
+PREVIOUS COVER-LETTER REVIEW (from earlier version):
+{previous_review}
+
+This is a FOLLOW-UP review. The reviewer convention is that the
+initial review says what needs to be said; later versions should not
+pile on with fresh nits the reviewer chose not to raise the first
+time round. Confirm whether the previous points were addressed,
+comment only on material that is new or substantially reworked in
+this version, and prefer VERDICT: skip when there is nothing new to
+add at the series level.
+'''
+
     return f'''You are an experienced U-Boot developer reviewing a patch series
 submitted to the U-Boot mailing list. Review the series as a whole,
 replying to the cover letter.
@@ -473,7 +537,7 @@ SERIES ({len(all_commits)} patches):
 {series_overview}
 
 You can run 'git show <hash>' on any of these to see the full diff.
-{cover_section}{comments_section}
+{cover_section}{comments_section}{context_section}{prev_section}
 TASK:
 1. Read through all the patches (use 'git show <hash>' for each)
 2. Review the series for:
@@ -1003,7 +1067,8 @@ async def _review_cover_letter(ctx, all_commits):
         str or None: Review body, or None if skipped
     """
     tout.notice('Reviewing series (cover letter)...')
-    prompt = _build_cover_review_prompt(ctx, all_commits)
+    prompt = _build_cover_review_prompt(
+        ctx, all_commits, previous_review=ctx.previous_reviews.get(0))
     options = ClaudeAgentOptions(
         allowed_tools=['Bash', 'Read', 'Grep'], cwd=ctx.repo_path,
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
@@ -1789,17 +1854,18 @@ def _apply_and_check(ctx, link):
         if not applied:
             # Zero commits, or branch missing because apply was interrupted
             success = False
-        elif applied != ctx.patch_count:
-            tout.error(f'Only {applied} of {ctx.patch_count} patches '
-                       f'applied to {ctx.branch_name}; aborting. Fix the '
-                       'conflicts manually and retry.')
-            success = False
 
     if not success:
         tout.error('Failed to apply patches to branch')
         ctx.cser.db.ser_ver_remove(ctx.series_id, ctx.version)
         ctx.cser.commit()
         return False
+    if applied != ctx.patch_count:
+        # Common with kernel-import series: the agent legitimately skips
+        # patches that are already applied upstream. Warn and proceed
+        # rather than discarding the apply
+        tout.warning(f'Only {applied} of {ctx.patch_count} patches applied '
+                     f'to {ctx.branch_name}; reviewing what is there')
     tout.notice(f'Patches applied to branch: {ctx.branch_name}')
     return True
 
@@ -1994,6 +2060,7 @@ def do_review(args, pwork, cser):
     if ctx.signoff:
         ctx.signoff = ctx.signoff.replace('\\n', '\n')
     ctx.spelling = args.spelling
+    ctx.context = _read_context(args.context) if args.context else None
     ctx.comments_path = _write_comments_file(series_data, pwork)
 
     _run_and_store_reviews(ctx, args)
