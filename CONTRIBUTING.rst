@@ -29,10 +29,10 @@ Building the documentation
 
 ::
 
-    pip install -r docs/requirements.txt
-    sphinx-build -b html docs docs/_build/html
+    pip install -r doc/requirements.txt
+    sphinx-build -b html doc doc/_build/html
 
-The manual itself lives in ``patman/patman.rst``; ``docs/`` only wraps it
+The manual itself lives in ``patman/patman.rst``; ``doc/`` only wraps it
 for Sphinx, so edit the manual there.
 
 Building the package
