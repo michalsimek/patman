@@ -3,7 +3,7 @@ requires = ["setuptools>=78.1.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "binary-manager"
+name = "patch-manager"
 version = "0.0.8rc1"
 authors = [
   { name="Simon Glass", email="sjg@chromium.org" },
@@ -48,7 +48,7 @@ all = [
 
 [project.urls]
 Homepage = "https://github.com/nxtboot/patman"
-Documentation = "https://binary-manager.readthedocs.io/"
+Documentation = "https://patman.readthedocs.io/"
 Repository = "https://github.com/nxtboot/patman"
 "Bug Tracker" = "https://github.com/nxtboot/patman/issues"
 
