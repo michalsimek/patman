@@ -55,9 +55,11 @@ Making a release
 Releases are published to PyPI automatically by the *Release* workflow
 when a version tag is pushed. The flow is:
 
-1. Bump ``version`` in ``pyproject.toml`` (and note the changes).
-2. Commit the bump.
-3. Tag it. The tag must be ``v`` followed by the exact version, for
+1. Update ``CHANGELOG.rst``: move the ``Unreleased`` entries under a new
+   ``X.Y.Z - <date>`` heading.
+2. Bump ``version`` in ``pyproject.toml``.
+3. Commit the changes.
+4. Tag it. The tag must be ``v`` followed by the exact version, for
    example::
 
        git tag v0.0.8
@@ -66,6 +68,10 @@ when a version tag is pushed. The flow is:
    A tag containing ``rc`` (for example ``v0.0.8rc1``) publishes to
    TestPyPI; a final tag publishes to the real PyPI. The workflow
    refuses to publish if the tag does not match the project version.
+
+   You can also trigger the *Release* workflow manually (the
+   ``workflow_dispatch`` option) to publish the current branch to
+   TestPyPI for a dry run, without a tag.
 
 Publishing uses PyPI Trusted Publishing (OIDC), so no API tokens are
 stored. The PyPI and TestPyPI projects must each be configured to trust
