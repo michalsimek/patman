@@ -2,12 +2,15 @@ name: Release
 
 # Publish to PyPI when a version tag is pushed. Tags containing 'rc'
 # (e.g. v0.0.8rc1) go to TestPyPI; final tags (e.g. v0.0.8) go to the
-# real PyPI. Authentication uses PyPI Trusted Publishing (OIDC), so no
-# API tokens are stored in the repository.
+# real PyPI. The workflow can also be run manually (workflow_dispatch)
+# to publish the current branch to TestPyPI for a dry run.
+# Authentication uses PyPI Trusted Publishing (OIDC), so no API tokens
+# are stored in the repository.
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -25,6 +28,7 @@ jobs:
           python-version: '3.12'
 
       - name: Check the tag matches the project version
+        if: github.event_name == 'push'
         run: |
           tag="${GITHUB_REF_NAME#v}"
           version=$(python -c "import tomllib; \
@@ -51,7 +55,8 @@ jobs:
   publish-testpypi:
     name: Publish to TestPyPI
     needs: build
-    if: contains(github.ref_name, 'rc')
+    # rc tags, or a manual run for a dry run
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.ref_name, 'rc') }}
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -73,7 +78,8 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     needs: build
-    if: ${{ !contains(github.ref_name, 'rc') }}
+    # only final version tags publish to the real PyPI
+    if: ${{ github.event_name == 'push' && !contains(github.ref_name, 'rc') }}
     runs-on: ubuntu-latest
     environment:
       name: pypi
