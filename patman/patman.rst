@@ -25,8 +25,10 @@ It also has some Patchwork features:
 - List comments received on a series
 
 It is intended to automate patch creation and make it a less
-error-prone process. It is useful for U-Boot and Linux work so far,
-since they use the checkpatch.pl script.
+error-prone process. It works with any git project that sends patches
+by email. The checkpatch and get_maintainer steps follow the U-Boot
+and Linux kernel conventions and can be skipped for projects that do
+not use them.
 
 It is configured almost entirely by tags it finds in your commits.
 This means that you can work on a number of different branches at
@@ -51,9 +53,6 @@ You can install patman using::
 
 The name is chosen since patman conflicts with an existing package.
 
-If you are using patman within the U-Boot tree, it may be easiest to add a
-symlink from your local `~/.bin` directory to `/path/to/tools/patman/patman`.
-
 How to use this tool
 --------------------
 
@@ -75,17 +74,17 @@ This tool requires a certain way of working:
 How to configure it
 -------------------
 
-For most cases of using patman for U-Boot development, patman can use the
-file 'doc/git-mailrc' in your U-Boot directory to supply the email aliases
-you need. To make this work, tell git where to find the file by typing
-this once::
+If your project ships a git mail-alias file (U-Boot, for example,
+provides 'doc/git-mailrc'), patman can use it to supply the email
+aliases you need. To make this work, tell git where to find the file
+by typing this once::
 
     git config sendemail.aliasesfile doc/git-mailrc
 
-For both Linux and U-Boot the 'scripts/get_maintainer.pl' handles
-figuring out where to send patches pretty well. For other projects,
-you may want to specify a different script to be run, for example via
-a project-specific `.patman` file::
+Projects in the U-Boot and Linux kernel style provide a
+'scripts/get_maintainer.pl' that works out where to send patches. For
+other projects, you may want to specify a different script to be run,
+for example via a project-specific `.patman` file::
 
     # .patman configuration file at the root of some project
 
@@ -122,8 +121,9 @@ file take precedence over those of the "global" one.
 
 Aliases are recursive.
 
-The checkpatch.pl in the U-Boot tools/ subdirectory will be located and
-used. Failing that you can put it into your path or ~/bin/checkpatch.pl
+If the project provides a checkpatch.pl (in its 'scripts/' or 'tools/'
+directory, as U-Boot and Linux do) patman will locate and use it.
+Failing that you can put it into your path or ~/bin/checkpatch.pl
 
 If you want to avoid sending patches to email addresses that are picked up
 by patman but are known to bounce you can add a [bounces] section to your
@@ -162,37 +162,24 @@ First do a dry run:
 
 .. code-block:: bash
 
-    ./tools/patman/patman send -n
+    patman send -n
 
 If it can't detect the upstream branch, try telling it how many patches
 there are in your series
 
 .. code-block:: bash
 
-    ./tools/patman/patman -c5 send -n
+    patman -c5 send -n
 
 This will create patch files in your current directory and tell you who
 it is thinking of sending them to. Take a look at the patch files:
 
 .. code-block:: bash
 
-    ./tools/patman/patman -c5 -s1 send -n
+    patman -c5 -s1 send -n
 
 Similar to the above, but skip the first commit and take the next 5. This
 is useful if your top commit is for setting up testing.
-
-
-How to install it
------------------
-
-The most up to date version of patman can be found in the U-Boot sources.
-However to use it on other projects it may be more convenient to install it as
-a standalone application. A distutils installer is included, this can be used
-to install patman:
-
-.. code-block:: bash
-
-    cd tools/patman && python setup.py install
 
 
 How to add tags
@@ -1191,17 +1178,16 @@ them:
 
 .. code-block:: bash
 
-    $ tools/patman/patman test
+    $ patman test
 
-Note that since the test suite depends on data files only available in
-the git checkout, the `test` command is hidden unless `patman` is
-invoked from the U-Boot git repository.
+The `test` command is only shown when the test data files are present;
+they ship with the source checkout and the installed package.
 
 Alternatively, you can run the test suite via Pytest:
 
 .. code-block:: bash
 
-    $ cd tools/patman && pytest
+    $ pytest
 
 Error handling doesn't always produce friendly error messages - e.g.
 putting an incorrect tag in a commit may provide a confusing message.
