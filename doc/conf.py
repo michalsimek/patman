@@ -20,3 +20,11 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 html_theme = 'sphinx_rtd_theme'
 html_static_path = []
+
+# Keep the table of contents fully expanded in the sidebar, so clicking
+# a section does not collapse the rest of the navigation.
+html_theme_options = {
+    'collapse_navigation': False,
+    'sticky_navigation': True,
+    'navigation_depth': 4,
+}
