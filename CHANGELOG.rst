@@ -8,6 +8,22 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
+0.0.9 - 2026-06-15
+------------------
+
+Fixed
+~~~~~
+- ``series status`` and ``gather`` now work on archived series, reading
+  the patches from the archive tag rather than the deleted branch.
+
+Changed
+~~~~~~~
+- Update the pinned dependencies to current releases and support the
+  pygit2 1.15 API.
+- Reorganise the documentation: it lives under ``doc/``, includes the
+  changelog, can be built with ``make -C doc html``, and reads as a
+  general patch tool rather than a U-Boot-specific one.
+
 0.0.8 - 2026-06-08
 ------------------
 
