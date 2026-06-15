@@ -212,7 +212,7 @@ class Cseries(cser_helper.CseriesHelper):
 
             del_name = f'{ser.name}{max_vers}'
             del_branch = repo.lookup_branch(del_name)
-            branch_oid = del_branch.peel(pygit2.enums.ObjectType.COMMIT).oid
+            branch_oid = del_branch.peel(pygit2.enums.ObjectType.COMMIT).id
             del_branch.delete()
             tout.info(f"Deleted branch '{del_name}' {oid(branch_oid)}")
 
@@ -1347,7 +1347,7 @@ class Cseries(cser_helper.CseriesHelper):
         repo = pygit2.Repository(self.gitdir)
         for _, (idnum, name, tag_name) in tag_info.items():
             commit = repo.revparse_single(name)
-            repo.create_tag(tag_name, commit.hex,
+            repo.create_tag(tag_name, str(commit.id),
                             pygit2.enums.ObjectType.COMMIT,
                             commit.author, commit.message)
 
@@ -1364,8 +1364,8 @@ class Cseries(cser_helper.CseriesHelper):
 
             # Detach HEAD from the branch if pointing to this branch
             commit = repo.revparse_single(name)
-            if repo.head.target == commit.oid:
-                repo.set_head(commit.oid)
+            if repo.head.target == commit.id:
+                repo.set_head(commit.id)
 
             repo.branches.delete(name)
 

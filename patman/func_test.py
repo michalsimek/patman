@@ -393,7 +393,7 @@ Changes in v2:
         target = repo.lookup_reference('refs/heads/first')
         # pylint doesn't seem to find this
         # pylint: disable=E1101
-        self.repo.checkout(target, strategy=pygit2.GIT_CHECKOUT_FORCE)
+        self.repo.checkout(target, strategy=pygit2.enums.CheckoutStrategy.FORCE)
         control.setup()
         orig_dir = os.getcwd()
         try:
@@ -443,7 +443,7 @@ Changes in v2:
             cover_lines = cover.splitlines()
             sig_pos = cover_lines.index('-- ')
             base2 = repo.lookup_reference('refs/heads/second')
-            ref = base2.peel(pygit2.GIT_OBJ_COMMIT).parents[0].parents[0].id
+            ref = base2.peel(pygit2.enums.ObjectType.COMMIT).parents[0].parents[0].id
             self.assertEqual(f'base-commit: {ref}', cover_lines[sig_pos - 3])
             self.assertEqual('branch: second', cover_lines[sig_pos - 2])
         finally:
@@ -603,7 +603,7 @@ diff --git a/lib/efi_loader/efi_memory.c b/lib/efi_loader/efi_memory.c
         target = repo.lookup_reference('refs/heads/base')
         # pylint doesn't seem to find this
         # pylint: disable=E1101
-        self.repo.checkout(target, strategy=pygit2.GIT_CHECKOUT_FORCE)
+        self.repo.checkout(target, strategy=pygit2.enums.CheckoutStrategy.FORCE)
 
         # Check that it can detect the current branch
         orig_dir = os.getcwd()

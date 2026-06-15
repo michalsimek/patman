@@ -835,7 +835,7 @@ class CseriesHelper:
         if not quiet:
             tout.info(
                 f'Checking out upstream commit {upstream_name}: '
-                f'{oid(commit.oid)}')
+                f'{oid(commit.id)}')
 
         old_head = repo.head
         if old_head.shorthand == name:
@@ -845,7 +845,7 @@ class CseriesHelper:
 
         if new_name:
             name = new_name
-        repo.set_head(commit.oid)
+        repo.set_head(commit.id)
 
         commits = []
         cmt = repo.get(branch.target)
@@ -881,7 +881,7 @@ class CseriesHelper:
 
         tree_id = repo.index.write_tree()
         cherry = repo.get(cmt.hash)
-        tout.detail(f"cherry {oid(cherry.oid)}")
+        tout.detail(f"cherry {oid(cherry.id)}")
         return tree_id, cherry
 
     def _finish_commit(self, repo, tree_id, commit, cur, msg=None):
@@ -929,12 +929,12 @@ class CseriesHelper:
         target = repo.revparse_single('HEAD')
         if not quiet:
             tout.info(f'Updating branch {name} from {oid(branch.target)} to '
-                      f'{str(target.oid)[:HASH_LEN]}')
+                      f'{str(target.id)[:HASH_LEN]}')
         if dry_run:
             if new_name:
                 repo.head.set_target(branch.target)
             else:
-                branch_oid = branch.peel(pygit2.enums.ObjectType.COMMIT).oid
+                branch_oid = branch.peel(pygit2.enums.ObjectType.COMMIT).id
                 repo.head.set_target(branch_oid)
             repo.head.set_target(branch.target)
             repo.set_head(branch.name)
@@ -991,7 +991,7 @@ class CseriesHelper:
             name, count, quiet=True)
         repo.checkout_tree(commit, strategy=CheckoutStrategy.FORCE |
                            CheckoutStrategy.RECREATE_MISSING)
-        repo.set_head(commit.oid)
+        repo.set_head(commit.id)
         for seq, cmt in enumerate(series.commits):
             if seq != seq_to_drop:
                 tree_id, cherry = self._pick_commit(repo, cmt)
@@ -1060,7 +1060,7 @@ class CseriesHelper:
             tout.info(f'- {info.ljust(max_len)} {rest}')
         target = self._finish_process(repo, branch, name, cur, old_head,
                                       new_name, switch, dry_run)
-        vals.oid = target.oid
+        vals.oid = target.id
 
     def _mark_series(self, name, series, dry_run=False):
         """Mark a series with Change-Id tags
