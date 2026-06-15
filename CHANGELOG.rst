@@ -8,6 +8,15 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
+0.0.10 - 2026-06-15
+-------------------
+
+Fixed
+~~~~~
+- ``status --dest-branch`` (building a branch with the gathered review
+  tags) works again on pygit2 1.16 and newer, where ``merge_trees()``
+  no longer accepts a branch object.
+
 0.0.9 - 2026-06-15
 ------------------
 
