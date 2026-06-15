@@ -43,6 +43,35 @@ jobs:
       - name: Run the test suite
         run: patman test
 
+  test-latest:
+    # Run against the newest dependency versions (no requirements.txt
+    # pins), which is what a fresh 'pip install patch-manager' gets. This
+    # catches breakage from upstream releases (e.g. pygit2) before users
+    # hit it, rather than only testing the pinned versions above.
+    name: Test (latest deps, Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install with the latest dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[all]
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name 'CI Tester'
+          git config --global user.email 'ci@example.com'
+
+      - name: Run the test suite
+        run: patman test
+
   package:
     name: Build and check the package
     runs-on: ubuntu-latest
