@@ -194,7 +194,8 @@ def create_branch(series, new_rtag_list, branch, dest_branch, overwrite,
         repo.merge_base(cherry.id, parent.target)
         base_tree = cherry.parents[0].tree
 
-        index = repo.merge_trees(base_tree, parent, cherry)
+        index = repo.merge_trees(
+            base_tree, repo[parent.target].tree, cherry.tree)
         tree_id = index.write_tree(repo)
 
         lines = []
