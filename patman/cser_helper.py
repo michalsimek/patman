@@ -651,7 +651,8 @@ class CseriesHelper:
             ser.name = name
         return ser
 
-    def _parse_series_and_version(self, in_name, in_version):
+    def _parse_series_and_version(self, in_name, in_version,
+                                  include_archived=False):
         """Parse name and version of a series, or detect from current branch
 
         Figures out the name from in_name, or if that is None, from the current
@@ -663,6 +664,7 @@ class CseriesHelper:
         Args:
             in_name (str or None): name of series
             in_version (str or None): version of series
+            include_archived (bool): True to also find archived series
 
         Return:
             tuple:
@@ -690,7 +692,7 @@ class CseriesHelper:
             version = 1
         if version > 99:
             raise ValueError(f"Version {version} exceeds 99")
-        ser = self.get_series_by_name(name)
+        ser = self.get_series_by_name(name, include_archived)
         if not ser:
             ser = Series()
             ser.name = name
@@ -1204,12 +1206,14 @@ class CseriesHelper:
         col_state = self.col.build(col, prefix + out, bright)
         return col_state, pad
 
-    def _get_patches(self, series, version):
+    def _get_patches(self, series, version, include_archived=False):
         """Get a Series object containing the patches in a series
 
         Args:
             series (str): Name of series to use, or None to use current branch
             version (int): Version number, or None to detect from name
+            include_archived (bool): True to also find archived series, reading
+                their patches from the archive tag rather than the branch
 
         Return: tuple:
             str: Name of branch, e.g. 'mary2'
@@ -1223,7 +1227,8 @@ class CseriesHelper:
             str: cover_id
             int: cover_num_comments
         """
-        ser, version = self._parse_series_and_version(series, version)
+        ser, version = self._parse_series_and_version(series, version,
+                                                      include_archived)
         if not ser.idnum:
             raise ValueError(f"Unknown series '{series}'")
         self._ensure_version(ser, version)
@@ -1232,7 +1237,10 @@ class CseriesHelper:
 
         count = len(pwc)
         branch = self._join_name_version(ser.name, version)
-        series = patchstream.get_metadata(branch, 0, count,
+        # An archived series has no branch; read its patches from the
+        # archive tag instead
+        ref = svinfo.archive_tag if svinfo.archive_tag else branch
+        series = patchstream.get_metadata(ref, 0, count,
                                           git_dir=self.gitdir)
         self._copy_db_fields_to(series, ser)
 
@@ -1389,14 +1397,24 @@ class CseriesHelper:
         if gather_tags:
             count = len(pwc)
             branch = self._join_name_version(series_name, version)
-            series = patchstream.get_metadata(branch, 0, count,
+            # An archived series has no branch: read its patches from the
+            # archive tag, and do not try to write gathered tags back into
+            # a branch that no longer exists
+            svrec = self.get_ser_ver_dict().get(svid)
+            archived = bool(svrec and svrec.archive_tag)
+            ref = svrec.archive_tag if archived else branch
+            series = patchstream.get_metadata(ref, 0, count,
                                               git_dir=self.gitdir)
 
             _, new_rtag_list = status.do_show_status(
                 series, cover, patches, show_comments, show_cover_comments,
                 self.col, warnings_on_stderr=False)
-            self.update_series(branch, series, version, None, dry_run,
-                                add_rtags=new_rtag_list)
+            if archived:
+                tout.info(f"Series '{series_name}' is archived: "
+                          'not updating commit tags')
+            else:
+                self.update_series(branch, series, version, None, dry_run,
+                                    add_rtags=new_rtag_list)
 
         updated = 0
         for seq, item in enumerate(pwc.values()):

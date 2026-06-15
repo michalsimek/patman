@@ -3920,6 +3920,23 @@ Date:   .*
                             show_cover_comments=True)
             self._check_status(out, True, True)
 
+    def test_series_status_gather_archived(self):
+        """status and gather should still work on an archived series"""
+        cser, pwork = self.setup_second()
+        with terminal.capture():
+            cser.archive('second')
+
+        # status reads the patches from the archive tag, since archiving
+        # deletes the branch
+        with terminal.capture() as (out, _):
+            cser.status(pwork, 'second', 2, False)
+        self._check_status(out, False, False)
+
+        # gather works from patchwork and the database, with no branch
+        with terminal.capture() as (out, _):
+            cser.gather(pwork, 'second', 2, False, False, True, dry_run=True)
+        self.assertIn('updated', out.getvalue())
+
     def test_series_status_cmdline(self):
         """Test getting the status of a series, including comments"""
         cser, pwork = self.setup_second()
