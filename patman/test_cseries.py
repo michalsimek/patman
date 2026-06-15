@@ -908,9 +908,9 @@ Tested-by: Mary Smith <msmith@wibble.com>   # yak
 
         repo = pygit2.init_repository(self.gitdir)
         first = repo.lookup_branch('first').peel(
-            pygit2.enums.ObjectType.COMMIT).oid
+            pygit2.enums.ObjectType.COMMIT).id
         base = repo.lookup_branch('base').peel(
-            pygit2.enums.ObjectType.COMMIT).oid
+            pygit2.enums.ObjectType.COMMIT).id
 
         gitutil.checkout('first', self.gitdir, work_tree=self.tmpdir,
                          force=True)
@@ -958,7 +958,7 @@ Tested-by: Mary Smith <msmith@wibble.com>   # yak
         # Check the original series was left alone
         self.assertEqual(
             first, repo.lookup_branch('first').peel(
-                pygit2.enums.ObjectType.COMMIT).oid)
+                pygit2.enums.ObjectType.COMMIT).id)
         count = 2
         series1 = patchstream.get_metadata_for_list('first', self.gitdir,
                                                     count)
@@ -968,7 +968,7 @@ Tested-by: Mary Smith <msmith@wibble.com>   # yak
         # Check that base is left alone
         self.assertEqual(
             base, repo.lookup_branch('base').peel(
-                pygit2.enums.ObjectType.COMMIT).oid)
+                pygit2.enums.ObjectType.COMMIT).id)
         series1 = patchstream.get_metadata_for_list('base', self.gitdir, count)
         self.assertFalse('links' in series1)
         self.assertFalse('version' in series1)
@@ -1534,8 +1534,8 @@ Tested-by: Mary Smith <msmith@wibble.com>   # yak
             # Make sure the branches have been restored
             branch1 = repo.branches['first']
             branch2 = repo.branches['first2']
-            self.assertEqual(expected_commit1.oid, branch1.target)
-            self.assertEqual(expected_commit2.oid, branch2.target)
+            self.assertEqual(expected_commit1.id, branch1.target)
+            self.assertEqual(expected_commit2.id, branch2.target)
 
             # Make sure the tags were deleted
             try:
@@ -1721,7 +1721,7 @@ Tested-by: Mary Smith <msmith@wibble.com>   # yak
         repo = pygit2.init_repository(self.gitdir)
         branch = repo.lookup_branch('first2')
         self.assertTrue(branch)
-        branch_oid = branch.peel(pygit2.enums.ObjectType.COMMIT).oid
+        branch_oid = branch.peel(pygit2.enums.ObjectType.COMMIT).id
 
         pclist = cser.get_pcommit_dict()
         self.assertEqual(4, len(pclist))
@@ -3560,7 +3560,7 @@ Date:   .*
         # Move off the branch and check for a sensible error
         commit = repo.revparse_single('first~')
         repo.checkout_tree(commit)
-        repo.set_head(commit.oid)
+        repo.set_head(commit.id)
 
         with self.assertRaises(ValueError) as exc:
             cser._parse_series_and_version(None, None)
@@ -3701,7 +3701,7 @@ Date:   .*
             'wip: Try out a new thing', 'Just checking', 'wibble.c',
             '''changes to wibble''')
         target = self.repo.revparse_single('HEAD')
-        self.repo.reset(target.oid, pygit2.enums.ResetMode.HARD)
+        self.repo.reset(target.id, pygit2.enums.ResetMode.HARD)
 
         # name = gitutil.get_branch(self.gitdir)
         # upstream_name = gitutil.get_upstream(self.gitdir, name)
