@@ -1431,7 +1431,7 @@ class Cseries(cser_helper.CseriesHelper):
             show_cover_comments (bool): Show all comments on the cover letter
         """
         branch, series, version, _, _, link, _, _ = self._get_patches(
-            series, version)
+            series, version, include_archived=True)
         if not link:
             raise ValueError(
                 f"Series '{series.name}' v{version} has no patchwork link: "
@@ -1470,7 +1470,8 @@ class Cseries(cser_helper.CseriesHelper):
             gather_tags (bool): True to gather review/test tags
             dry_run (bool): True to do a dry run (database is not updated)
         """
-        ser, version = self._parse_series_and_version(series, version)
+        ser, version = self._parse_series_and_version(
+            series, version, include_archived=True)
         self._ensure_version(ser, version)
         svid, link = self._get_series_svid_link(ser.idnum, version)
         if not link:
