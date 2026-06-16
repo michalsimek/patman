@@ -1,3 +1,7 @@
+.. image:: logo/patman-logo-primary.png
+   :alt: Patman
+   :width: 400px
+
 Patman patch manager
 ====================
 
