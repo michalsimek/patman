@@ -1117,6 +1117,36 @@ Tested-by: Mary Smith <msmith@wibble.com>   # yak
                 (457, None, 'second', 2, 'Series for my board'),
                 cser.link_search(pwork, 'second', 2))
 
+    def test_series_link_auto_renamed(self):
+        """autolink uses the live cover title, not a stale stored desc
+
+        When a later version renames the series (changes the cover-letter
+        title) after the version was created, the per-version description
+        stored at creation time goes stale. link_search must use the
+        current cover title from the branch so it searches patchwork for
+        the right name.
+        """
+        cser = self.get_cser()
+        with terminal.capture():
+            cser.add('second', allow_unmarked=True)
+            cser.link_set('second', None, f'{self.SERIES_ID_SECOND_V1}', True)
+            cser.increment('second')
+
+        pwork = Patchwork.for_testing(self._fake_patchwork_cser)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+        cser.project_set(pwork, 'U-Boot', quiet=True)
+
+        # Simulate the rename: the stored v2 description no longer matches
+        # the cover-letter title on the branch
+        ser = cser.get_series_by_name('second')
+        svid = cser.get_series_svid(ser.idnum, 2)
+        cser.db.ser_ver_set_desc(svid, 'Stale old title')
+        cser.commit()
+
+        with terminal.capture():
+            _, _, _, _, desc = cser.link_search(pwork, 'second', 2)
+        self.assertEqual(self.TITLE_SECOND, desc)
+
     def test_series_link_auto_name(self):
         """Test finding the patchwork link for a cseries with auto name"""
         cser = self.get_cser()
