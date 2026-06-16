@@ -1,0 +1,36 @@
+<svg viewBox="0 0 700 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t">
+  <title id="t">patman</title>
+  <defs>
+    <style>
+      .word { font-family: 'JetBrains Mono','SF Mono',ui-monospace,Menlo,Consolas,monospace;
+              font-weight: 700; font-size: 92px; letter-spacing: -3px; fill: #1B2330; }
+    </style>
+    <clipPath id="badge"><circle cx="120" cy="120" r="92"/></clipPath>
+  </defs>
+
+  <!-- badge -->
+  <circle cx="120" cy="120" r="92" fill="#12161C"/>
+
+  <g clip-path="url(#badge)">
+    <!-- cape -->
+    <path d="M120 96 L40 150 L78 214 L120 168 L162 214 L200 150 Z" fill="#2EA043"/>
+    <!-- torso / suit -->
+    <path d="M64 214 C64 150 92 122 120 122 C148 122 176 150 176 214 Z" fill="#3C4C62"/>
+    <!-- head / cowl -->
+    <rect x="89" y="56" width="62" height="62" rx="22" fill="#46586F"/>
+    <!-- mask eye slits -->
+    <polygon points="101,90 116,86 115,98 101,99" fill="#9FE6FF"/>
+    <polygon points="139,90 124,86 125,98 139,99" fill="#9FE6FF"/>
+
+    <!-- chest crest: stitched fabric patch -->
+    <rect x="103" y="150" width="34" height="30" rx="9" fill="#12161C"
+          stroke="#E6EDF3" stroke-width="2" stroke-dasharray="3 3"/>
+    <!-- tiny diff inside the patch -->
+    <rect x="110" y="158" width="12" height="3" rx="1.5" fill="#FF6B61"/>
+    <rect x="114" y="166" width="3"  height="12" rx="1.5" fill="#3FB950"/>
+    <rect x="109" y="170" width="13" height="3" rx="1.5" fill="#3FB950"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="252" y="120" dominant-baseline="central" class="word">patman</text>
+</svg>
