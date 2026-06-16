@@ -1,0 +1,33 @@
+<svg viewBox="0 0 700 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t">
+  <title id="t">patman</title>
+  <defs>
+    <style>
+      .word { font-family: 'JetBrains Mono','SF Mono',ui-monospace,Menlo,Consolas,monospace;
+              font-weight: 700; font-size: 92px; letter-spacing: -3px; fill: #1B2330; }
+    </style>
+  </defs>
+
+  <!-- patch / diff-hunk tile -->
+  <rect x="30" y="30" width="180" height="180" rx="38" fill="#12161C"/>
+
+  <!-- row 1: removed line -->
+  <rect x="64" y="72" width="16" height="4" rx="2" fill="#FF6B61"/>
+  <rect x="92" y="66" width="84" height="16" rx="8" fill="#FF6B61" opacity="0.6"/>
+
+  <!-- row 2: added line -->
+  <rect x="62" y="118" width="20" height="4" rx="2" fill="#3FB950"/>
+  <rect x="70" y="110" width="4"  height="20" rx="2" fill="#3FB950"/>
+  <rect x="92" y="112" width="66" height="16" rx="8" fill="#3FB950"/>
+
+  <!-- row 3: added line -->
+  <rect x="62" y="162" width="20" height="4" rx="2" fill="#3FB950"/>
+  <rect x="70" y="154" width="4"  height="20" rx="2" fill="#3FB950"/>
+  <rect x="92" y="156" width="48" height="16" rx="8" fill="#3FB950"/>
+
+  <!-- CLI prompt chevron -->
+  <polyline points="252,100 276,120 252,140" fill="none" stroke="#2EA043"
+            stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- wordmark -->
+  <text x="300" y="120" dominant-baseline="central" class="word">patman</text>
+</svg>
