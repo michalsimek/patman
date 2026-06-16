@@ -341,9 +341,15 @@ class Cseries(cser_helper.CseriesHelper):
         _, ser, version, _, _, _, _, _ = self._get_patches(series, version)
         svinfo = self.get_ser_ver(ser.idnum, version)
 
-        # Use the per-version description if available, since the
-        # series-level desc may be stale (e.g. patch order changed)
-        desc = svinfo.desc or ser.desc
+        # Prefer the live cover-letter title from the branch: it is what
+        # patchwork indexes the series by, and it reflects a rename made
+        # after the version was created (the stored description would be
+        # stale in that case). Fall back to the stored per-version
+        # description for series with no cover letter, where it is more
+        # stable than the first commit subject (e.g. if patches are
+        # reordered).
+        desc = ser.cover[0] if ser.cover else None
+        desc = desc or svinfo.desc or ser.desc
         if not desc:
             raise ValueError(f"Series '{ser.name}' has an empty description")
         ser.desc = desc
