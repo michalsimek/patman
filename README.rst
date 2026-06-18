@@ -1,4 +1,4 @@
-.. image:: logo/patman-logo-primary.png
+.. image:: https://raw.githubusercontent.com/nxtboot/patman/master/logo/patman-logo-primary.png
    :alt: Patman
    :width: 400px
 
