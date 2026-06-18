@@ -6,3 +6,6 @@ __pycache__/
 /dist/
 /build/
 /doc/_build/
+
+# Local patman databases
+*.db

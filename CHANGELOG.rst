@@ -8,6 +8,19 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
+0.0.11 - 2026-06-16
+-------------------
+
+Added
+~~~~~
+- A project logo, shown in the documentation and the README.
+
+Fixed
+~~~~~
+- ``autolink`` finds a series whose cover-letter title changed in a
+  later version: it searches patchwork by the current title rather than
+  the title recorded when the version was created.
+
 0.0.10 - 2026-06-15
 -------------------
 
