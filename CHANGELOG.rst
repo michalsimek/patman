@@ -8,7 +8,7 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
-0.0.11 - 2026-06-16
+0.0.11 - 2026-06-18
 -------------------
 
 Added
