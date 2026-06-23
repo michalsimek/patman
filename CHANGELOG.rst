@@ -10,6 +10,9 @@ Unreleased
 
 Added
 ~~~~~
+- ``review --scan`` looks on patchwork for new versions of series that
+  have already been reviewed and reviews the latest version, once it has
+  fully appeared on patchwork.
 - ``review --redraft`` recreates the Gmail drafts from the stored
   reviews even when a draft already exists, to recover after an error.
 

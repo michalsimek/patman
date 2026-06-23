@@ -1997,40 +1997,24 @@ def _find_or_register(ctx, args, clean_name, link):
     return series_id, svid
 
 
-def do_review(args, pwork, cser):
-    """Run the review command
+def _review_link(args, pwork, cser, link):
+    """Run the main review flow for a single patchwork series
 
-    Dispatches to learn-voice, sync, or the main review flow
-    which fetches, applies, reviews and optionally drafts.
+    Fetches the series, registers it (detecting an already-reviewed series
+    or a new version), applies the patches in a worktree and reviews them.
 
     Args:
         args (Namespace): Command-line arguments
         pwork (Patchwork): Configured patchwork instance
         cser (Cseries): Open cseries instance
+        link (str): Patchwork series link/ID
+
+    Returns:
+        int: 0 on success, 1 if applying the patches failed
+
+    Raises:
+        ValueError: if the series is incomplete (not all patches present)
     """
-    if args.learn_voice:
-        return _do_learn_voice(args, pwork)
-
-    if args.sync:
-        return _do_sync(args, cser)
-
-    has_patch = getattr(args, 'patch', None)
-    has_patch_title = getattr(args, 'patch_title', None)
-    if not args.pw_link and not args.title and not has_patch and \
-            not has_patch_title:
-        raise ValueError("Please provide -s <series>, -S <title>, "
-            "-p <patch-id> or -P <patch-title>")
-
-    link = args.pw_link
-    if not link and has_patch:
-        link, patch_seq = lookup_patch_series(pwork, args.patch)
-        args.patches = str(patch_seq)
-    elif not link and has_patch_title:
-        link, patch_seq = search_patch(pwork, args.patch_title)
-        args.patches = str(patch_seq)
-    elif not link:
-        link = search_series(pwork, args.title)
-
     series_data, clean_name, version, patch_count = \
         _fetch_series(pwork, link)
 
@@ -2073,6 +2057,116 @@ def do_review(args, pwork, cser):
     gitutil.remove_worktree(ctx.main_repo, wt_path)
 
     return 0
+
+
+def _scan_new_versions(pwork, cser):
+    """Find newer patchwork versions of already-reviewed series
+
+    For each reviewed series, search patchwork by its cover-letter title
+    and report the highest version present that is newer than the latest
+    reviewed one. The highest version is returned even when it is still
+    incomplete, so the caller can wait for it rather than reviewing an
+    older, now-superseded version.
+
+    Args:
+        pwork (Patchwork): Configured patchwork instance
+        cser (Cseries): Open cseries instance
+
+    Returns:
+        list of tuple: (desc, version, link) for each series with a newer
+            version, ordered by series description
+    """
+    series = cser.db.series_get_dict(reviews_only=True)
+    found = []
+
+    async def _scan():
+        async with aiohttp.ClientSession() as client:
+            for ser in series.values():
+                max_ver = cser.db.series_get_max_version(ser.idnum)
+                matches = await pwork.query_series(client, ser.desc)
+                newer = [pws for pws in matches
+                         if pws['name'] == ser.desc and
+                         int(pws['version']) > max_ver]
+                if newer:
+                    latest = max(newer, key=lambda pws: int(pws['version']))
+                    found.append(
+                        (ser.desc, int(latest['version']), latest['id']))
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(_scan())
+    return found
+
+
+def _do_scan(args, pwork, cser):
+    """Scan patchwork for new versions of already-reviewed series
+
+    For every reviewed series, look for a version on patchwork higher than
+    the latest one reviewed and review it. Only the highest version is
+    considered: if it has not fully appeared on patchwork yet, the series
+    is left to wait rather than reviewing an older, superseded version.
+
+    Args:
+        args (Namespace): Command-line arguments
+        pwork (Patchwork): Configured patchwork instance
+        cser (Cseries): Open cseries instance
+
+    Returns:
+        int: 0 on success, 1 if any review failed
+    """
+    found = _scan_new_versions(pwork, cser)
+    if not found:
+        tout.notice('No new versions found')
+        return 0
+
+    ret = 0
+    for desc, version, link in found:
+        tout.notice(f"New version v{version} of '{desc}'")
+        try:
+            if _review_link(args, pwork, cser, str(link)):
+                ret = 1
+        except ValueError as exc:
+            tout.notice(f"Waiting for v{version} of '{desc}': {exc}")
+    return ret
+
+
+def do_review(args, pwork, cser):
+    """Run the review command
+
+    Dispatches to learn-voice, sync, scan, or the main review flow
+    which fetches, applies, reviews and optionally drafts.
+
+    Args:
+        args (Namespace): Command-line arguments
+        pwork (Patchwork): Configured patchwork instance
+        cser (Cseries): Open cseries instance
+    """
+    if args.learn_voice:
+        return _do_learn_voice(args, pwork)
+
+    if args.sync:
+        return _do_sync(args, cser)
+
+    if args.scan:
+        return _do_scan(args, pwork, cser)
+
+    has_patch = getattr(args, 'patch', None)
+    has_patch_title = getattr(args, 'patch_title', None)
+    if not args.pw_link and not args.title and not has_patch and \
+            not has_patch_title:
+        raise ValueError("Please provide -s <series>, -S <title>, "
+            "-p <patch-id> or -P <patch-title>")
+
+    link = args.pw_link
+    if not link and has_patch:
+        link, patch_seq = lookup_patch_series(pwork, args.patch)
+        args.patches = str(patch_seq)
+    elif not link and has_patch_title:
+        link, patch_seq = search_patch(pwork, args.patch_title)
+        args.patches = str(patch_seq)
+    elif not link:
+        link = search_series(pwork, args.title)
+
+    return _review_link(args, pwork, cser, link)
 
 
 VOICE_PATH = os.path.join(os.path.expanduser('~/.config/patman.d'),

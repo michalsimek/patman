@@ -1429,6 +1429,21 @@ This:
 - Generates response drafts when appropriate (e.g. answering
   questions, pushing back on objections, or conceding gracefully)
 
+Scanning for new versions
+-------------------------
+
+Rather than reviewing one series at a time, ``--scan`` looks on
+patchwork for new versions of series you have already reviewed and
+reviews them::
+
+    patman review --scan -U us --reviewer 'Your Name <your@email>'
+
+For each reviewed series it takes the highest version on patchwork
+above the latest one reviewed. A version is reviewed only once it has
+fully appeared on patchwork; if the newest version is still arriving,
+the series is left to wait rather than reviewing an older, now
+superseded one.
+
 Review lifecycle
 ----------------
 

@@ -4922,6 +4922,96 @@ Date:   .*
         self.assertIn('Already reviewed', output)
         self.assertIn('Created 1 Gmail draft', output)
 
+    def _fake_patchwork_review_incomplete(self, subpath):
+        """Fake Patchwork where v2 has not fully appeared yet"""
+        data = self._fake_patchwork_review(subpath)
+        m_series = re.match(r'series/(\d+)/$', subpath)
+        if m_series and int(m_series.group(1)) == self.REVIEW_LINK_V2:
+            data['total'] = 2
+            data['received_total'] = 1
+        return data
+
+    def test_review_scan(self):
+        """Test --scan reviews a new version of an already-reviewed series"""
+        cser = self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review v1 first
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as _:
+                self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork)
+
+        # Scanning should find and review v2
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', pwork=pwork)
+        self.assertIn('New version v2', out.getvalue())
+
+        # v2 is now recorded under the same series and has a review
+        self.db_open()
+        v1 = cser.db.series_find_by_link(str(self.REVIEW_LINK))
+        v2 = cser.db.series_find_by_link(str(self.REVIEW_LINK_V2))
+        self.assertIsNotNone(v2)
+        self.assertEqual(v1[0], v2[0])  # same series_id
+        self.assertEqual(2, v2[2])  # version 2
+        self.assertTrue(cser.db.review_get_for_version(v2[3]))
+
+    def test_review_scan_no_new(self):
+        """Test --scan reports nothing when there is no newer version"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review the latest version (v2)
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as _:
+                self.run_review('-s', str(self.REVIEW_LINK_V2), pwork=pwork)
+
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', pwork=pwork)
+        self.assertIn('No new versions found', out.getvalue())
+
+    def test_review_scan_incomplete(self):
+        """Test --scan waits when the newest version is incomplete"""
+        cser = self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review_incomplete)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review v1 (complete)
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as _:
+                self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork)
+
+        # v2 is only partly on patchwork; scan should wait, not review it
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', pwork=pwork)
+        self.assertIn('Waiting for v2', out.getvalue())
+
+        # v2 was not reviewed
+        self.db_open()
+        self.assertIsNone(cser.db.series_find_by_link(str(self.REVIEW_LINK_V2)))
+
     def _make_review_ctx(self, reviewer_name='Test', reviewer_email='test@test.com',
                          author_name='', author_email='', date='', signoff=None,
                          diffstat=None):

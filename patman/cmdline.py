@@ -632,6 +632,10 @@ def add_review_subparser(subparsers):
         help='Check if review drafts have been sent and record the '
              'final email content')
     review.add_argument(
+        '--scan', action='store_true',
+        help='Scan patchwork for new versions of already-reviewed series '
+             'and review the latest version once it has fully appeared')
+    review.add_argument(
         '-f', '--force', action='store_true',
         help='Force re-review even if the series was already reviewed')
     review.add_argument(
