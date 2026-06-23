@@ -1767,7 +1767,9 @@ def _fetch_series(pwork, link):
 def _draft_stored_reviews(args, reviews, series_data, pwork, cser):
     """Create Gmail drafts from stored review records
 
-    Only drafts reviews that do not already have a draft_id.
+    Drafts reviews that do not already have a draft_id. With --redraft it
+    drafts every stored review, recreating drafts that already exist so a
+    failed or lost draft can be regenerated from the database.
 
     Args:
         args (Namespace): Command-line arguments
@@ -1776,8 +1778,11 @@ def _draft_stored_reviews(args, reviews, series_data, pwork, cser):
         pwork (Patchwork): Patchwork instance
         cser (Cseries): Cseries instance
     """
-    need_draft = [rev for rev in reviews
-                  if not rev.draft_id]
+    if args.redraft:
+        need_draft = list(reviews)
+    else:
+        need_draft = [rev for rev in reviews
+                      if not rev.draft_id]
     if not need_draft:
         tout.notice('All reviews already have Gmail drafts')
         return
@@ -1981,7 +1986,7 @@ def _find_or_register(ctx, args, clean_name, link):
         _, db_name, db_version, _ = existing
         tout.notice(f"Already reviewed: '{db_name}' v{db_version}")
         _show_reviews(reviews, ctx.series_data)
-        if args.create_drafts:
+        if args.create_drafts or args.redraft:
             _draft_stored_reviews(args, reviews, ctx.series_data, ctx.pwork,
                                   ctx.cser)
         return None

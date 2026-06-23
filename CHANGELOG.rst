@@ -8,6 +8,11 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
+Added
+~~~~~
+- ``review --redraft`` recreates the Gmail drafts from the stored
+  reviews even when a draft already exists, to recover after an error.
+
 0.0.11 - 2026-06-18
 -------------------
 

@@ -588,6 +588,10 @@ def add_review_subparser(subparsers):
         '-d', '--create-drafts', action='store_true',
         help='Create Gmail draft emails for each review')
     review.add_argument(
+        '--redraft', action='store_true',
+        help='Recreate Gmail drafts from the stored reviews even when a '
+             'draft already exists, to recover after an error')
+    review.add_argument(
         '--gmail-account', type=str, default=None,
         help='Gmail account to create drafts in (e.g. user@gmail.com)')
     review.add_argument(

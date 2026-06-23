@@ -4882,6 +4882,46 @@ Date:   .*
         output = out.getvalue()
         self.assertIn('Created 1 Gmail draft', output)
 
+    def test_review_redraft(self):
+        """Test --redraft recreates drafts for an already-reviewed series"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        def run(*extra):
+            mocks = self._mock_review()
+            with contextlib.ExitStack() as stack:
+                for m in mocks:
+                    stack.enter_context(m)
+                with mock.patch('patman.gmail.check_available',
+                                return_value=True):
+                    with mock.patch('patman.gmail.get_service') as mock_svc:
+                        mock_svc.return_value.users.return_value \
+                            .drafts.return_value \
+                            .create.return_value \
+                            .execute.return_value = {'id': 'draft123'}
+                        mock_svc.return_value.users.return_value \
+                            .messages.return_value \
+                            .list.return_value \
+                            .execute.return_value = {'messages': []}
+                        with terminal.capture() as (out, _):
+                            self.run_review('-s', str(self.REVIEW_LINK),
+                                            *extra, pwork=pwork)
+            return out.getvalue()
+
+        # The first review stores the reviews and creates the drafts
+        self.assertIn('Created 1 Gmail draft', run('--create-drafts'))
+
+        # Re-running with --create-drafts leaves the existing drafts alone
+        output = run('--create-drafts')
+        self.assertIn('Already reviewed', output)
+        self.assertIn('All reviews already have Gmail drafts', output)
+
+        # --redraft recreates the drafts from the database
+        output = run('--redraft')
+        self.assertIn('Already reviewed', output)
+        self.assertIn('Created 1 Gmail draft', output)
+
     def _make_review_ctx(self, reviewer_name='Test', reviewer_email='test@test.com',
                          author_name='', author_email='', date='', signoff=None,
                          diffstat=None):

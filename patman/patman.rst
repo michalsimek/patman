@@ -1289,6 +1289,12 @@ To create Gmail drafts threaded under the original emails::
 Use ``-n`` with ``-d`` for a dry run that shows what would be created
 without calling the Gmail API.
 
+If a draft failed to create or was lost, ``--redraft`` recreates the
+Gmail drafts from the stored reviews, even when the series has already
+been reviewed and the drafts already exist::
+
+    patman review -s 497923 --redraft --gmail-account your@email
+
 Use ``--apply-only`` to download and apply patches without running the
 AI review -- useful for checking that patches apply cleanly.
 
