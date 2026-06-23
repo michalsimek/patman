@@ -1452,6 +1452,12 @@ superseded one.
 Reviews run in parallel, each in its own child process and review
 worktree, up to ``--jobs`` (``-j``) at a time (default 4).
 
+Each review's output is buffered and printed as one block when it
+finishes, prefixed with a ``[done/total]`` counter and ending with a
+summary line::
+
+    Scanned: 3 new, 1 reviewed, 1 waiting, 0 failed
+
 Review lifecycle
 ----------------
 

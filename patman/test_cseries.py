@@ -4964,7 +4964,11 @@ Date:   .*
                 self.run_review('--scan', pwork=pwork)
         output = out.getvalue()
         self.assertIn('New version v2', output)
+        self.assertIn('Launching 1 review(s), 1 at a time', output)
+        self.assertIn('[1/1]', output)
         self.assertIn('reviewed v2', output)
+        self.assertIn('Scanned: 1 new, 1 reviewed, 0 waiting, 0 failed',
+                      output)
         self.assertEqual([(2, self.REVIEW_LINK_V2)], launched)
 
     def test_review_scan_no_new(self):
@@ -4995,7 +4999,10 @@ Date:   .*
         with mock.patch('patman.review._review_one_subprocess') as mock_sub:
             with terminal.capture() as (out, _):
                 self.run_review('--scan', pwork=pwork)
-        self.assertIn('Waiting for v2', out.getvalue())
+        output = out.getvalue()
+        self.assertIn('Waiting for v2', output)
+        self.assertIn('Scanned: 1 new, 0 reviewed, 1 waiting, 0 failed',
+                      output)
         mock_sub.assert_not_called()
 
     def test_review_scan_command(self):

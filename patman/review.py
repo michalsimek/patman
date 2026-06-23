@@ -2235,16 +2235,18 @@ def _review_one_subprocess(args, desc, version, link):
     return ScanResult(desc, version, link, proc.returncode, proc.stdout)
 
 
-def _print_scan_result(result):
+def _print_scan_result(result, done, total):
     """Print the buffered output of a finished review as a labelled block
 
     Args:
         result (ScanResult): Result to print
+        done (int): Number of reviews finished so far, including this one
+        total (int): Total number of reviews being run
     """
     status = 'ok' if not result.returncode else f'failed ({result.returncode})'
     tout.notice('')
-    tout.notice(f"===== v{result.version} of '{result.desc}' "
-                f"(link {result.link}): {status} =====")
+    tout.notice(f"===== [{done}/{total}] v{result.version} of "
+                f"'{result.desc}' (link {result.link}): {status} =====")
     if result.output:
         tout.notice(result.output.rstrip())
 
@@ -2272,28 +2274,37 @@ def _do_scan(args, pwork, cser):
         return 0
 
     to_review = []
+    waiting = 0
     for new in found:
         if new.complete:
             tout.notice(f"New version v{new.version} of '{new.desc}'")
             to_review.append(new)
         else:
+            waiting += 1
             tout.notice(f"Waiting for v{new.version} of '{new.desc}' "
                         'to fully appear')
-    if not to_review:
-        return 0
 
-    jobs = max(1, getattr(args, 'jobs', 1))
-    ret = 0
-    with futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        pending = [pool.submit(_review_one_subprocess, args, new.desc,
-                               new.version, new.link)
-                   for new in to_review]
-        for future in futures.as_completed(pending):
-            result = future.result()
-            _print_scan_result(result)
-            if result.returncode:
-                ret = 1
-    return ret
+    total = len(to_review)
+    failed = 0
+    if total:
+        jobs = max(1, getattr(args, 'jobs', 1))
+        tout.notice(f'Launching {total} review(s), {min(jobs, total)} '
+                    'at a time')
+        done = 0
+        with futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            pending = [pool.submit(_review_one_subprocess, args, new.desc,
+                                   new.version, new.link)
+                       for new in to_review]
+            for future in futures.as_completed(pending):
+                result = future.result()
+                done += 1
+                _print_scan_result(result, done, total)
+                if result.returncode:
+                    failed += 1
+
+    tout.notice(f'Scanned: {len(found)} new, {total - failed} reviewed, '
+                f'{waiting} waiting, {failed} failed')
+    return 1 if failed else 0
 
 
 def do_review(args, pwork, cser):
