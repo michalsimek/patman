@@ -15,10 +15,13 @@ Gmail draft replies.
 
 import asyncio
 from collections import namedtuple
+from concurrent import futures
 from datetime import datetime
 import fcntl
 import os
 import re
+import subprocess
+import sys
 import tempfile
 
 import aiohttp
@@ -2120,22 +2123,26 @@ def _review_link(args, pwork, cser, link):
         _release_review_lock(lock_fd)
 
 
+NewVersion = namedtuple('NewVersion', 'desc,version,link,complete')
+
+ScanResult = namedtuple('ScanResult', 'desc,version,link,returncode,output')
+
+
 def _scan_new_versions(pwork, cser):
     """Find newer patchwork versions of already-reviewed series
 
     For each reviewed series, search patchwork by its cover-letter title
-    and report the highest version present that is newer than the latest
-    reviewed one. The highest version is returned even when it is still
-    incomplete, so the caller can wait for it rather than reviewing an
-    older, now-superseded version.
+    for the highest version present that is newer than the latest reviewed
+    one. The highest version is reported even when it is still incomplete,
+    along with whether it has fully appeared, so the caller can wait for it
+    rather than reviewing an older, now-superseded version.
 
     Args:
         pwork (Patchwork): Configured patchwork instance
         cser (Cseries): Open cseries instance
 
     Returns:
-        list of tuple: (desc, version, link) for each series with a newer
-            version, ordered by series description
+        list of NewVersion: one entry per series that has a newer version
     """
     series = cser.db.series_get_dict(reviews_only=True)
     found = []
@@ -2148,23 +2155,108 @@ def _scan_new_versions(pwork, cser):
                 newer = [pws for pws in matches
                          if pws['name'] == ser.desc and
                          int(pws['version']) > max_ver]
-                if newer:
-                    latest = max(newer, key=lambda pws: int(pws['version']))
-                    found.append(
-                        (ser.desc, int(latest['version']), latest['id']))
+                if not newer:
+                    continue
+                latest = max(newer, key=lambda pws: int(pws['version']))
+                data = await pwork.get_series(client, latest['id'])
+                received = data.get('received_total', 0)
+                total = data.get('total', received)
+                found.append(NewVersion(ser.desc, int(latest['version']),
+                                        latest['id'], received >= total))
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(_scan())
     return found
 
 
+def _build_review_command(args, link):
+    """Build the argv to review one series in a child process
+
+    Passes through the global and review options given to --scan so each
+    child behaves like a manual 'patman review -s <link>'. Global options
+    (project, patchwork URL) come before the 'review' subcommand; review
+    options come after it.
+
+    Args:
+        args (Namespace): Command-line arguments
+        link (str): Patchwork series link/ID
+
+    Returns:
+        list of str: Command to run
+    """
+    cmd = [sys.executable, '-m', 'patman']
+    if getattr(args, 'project', None):
+        cmd += ['-p', args.project]
+    if getattr(args, 'patchwork_url', None):
+        cmd += ['-P', args.patchwork_url]
+    if getattr(args, 'verbose', False):
+        cmd.append('-v')
+    if getattr(args, 'debug', False):
+        cmd.append('-D')
+    cmd += ['review', '-s', str(link)]
+    if getattr(args, 'upstream', None):
+        cmd += ['-U', args.upstream]
+    if getattr(args, 'reviewer', None):
+        cmd += ['--reviewer', args.reviewer]
+    if getattr(args, 'base_branch', None):
+        cmd += ['-b', args.base_branch]
+    if getattr(args, 'gmail_account', None):
+        cmd += ['--gmail-account', args.gmail_account]
+    if getattr(args, 'signoff', None):
+        cmd += ['--signoff', args.signoff]
+    if getattr(args, 'spelling', None):
+        cmd += ['--spelling', args.spelling]
+    if getattr(args, 'context', None):
+        cmd += ['-c', args.context]
+    if getattr(args, 'create_drafts', False):
+        cmd.append('--create-drafts')
+    return cmd
+
+
+def _review_one_subprocess(args, desc, version, link):
+    """Review a single series in a child process
+
+    Runs 'patman review -s <link>' so the review has its own database
+    connection, event loop and worktree, capturing its combined output to
+    print as one block once it finishes.
+
+    Args:
+        args (Namespace): Command-line arguments
+        desc (str): Series description (cover-letter title)
+        version (int): Series version being reviewed
+        link (str): Patchwork series link/ID
+
+    Returns:
+        ScanResult: outcome of the review
+    """
+    cmd = _build_review_command(args, link)
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True, check=False)
+    return ScanResult(desc, version, link, proc.returncode, proc.stdout)
+
+
+def _print_scan_result(result):
+    """Print the buffered output of a finished review as a labelled block
+
+    Args:
+        result (ScanResult): Result to print
+    """
+    status = 'ok' if not result.returncode else f'failed ({result.returncode})'
+    tout.notice('')
+    tout.notice(f"===== v{result.version} of '{result.desc}' "
+                f"(link {result.link}): {status} =====")
+    if result.output:
+        tout.notice(result.output.rstrip())
+
+
 def _do_scan(args, pwork, cser):
     """Scan patchwork for new versions of already-reviewed series
 
     For every reviewed series, look for a version on patchwork higher than
-    the latest one reviewed and review it. Only the highest version is
-    considered: if it has not fully appeared on patchwork yet, the series
-    is left to wait rather than reviewing an older, superseded version.
+    the latest one reviewed. Only the highest version is considered: if it
+    has not fully appeared on patchwork yet, the series is left to wait
+    rather than reviewing an older, superseded version. Complete versions
+    are reviewed, each in its own child process, up to --jobs at a time.
 
     Args:
         args (Namespace): Command-line arguments
@@ -2179,14 +2271,28 @@ def _do_scan(args, pwork, cser):
         tout.notice('No new versions found')
         return 0
 
+    to_review = []
+    for new in found:
+        if new.complete:
+            tout.notice(f"New version v{new.version} of '{new.desc}'")
+            to_review.append(new)
+        else:
+            tout.notice(f"Waiting for v{new.version} of '{new.desc}' "
+                        'to fully appear')
+    if not to_review:
+        return 0
+
+    jobs = max(1, getattr(args, 'jobs', 1))
     ret = 0
-    for desc, version, link in found:
-        tout.notice(f"New version v{version} of '{desc}'")
-        try:
-            if _review_link(args, pwork, cser, str(link)):
+    with futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        pending = [pool.submit(_review_one_subprocess, args, new.desc,
+                               new.version, new.link)
+                   for new in to_review]
+        for future in futures.as_completed(pending):
+            result = future.result()
+            _print_scan_result(result)
+            if result.returncode:
                 ret = 1
-        except ValueError as exc:
-            tout.notice(f"Waiting for v{version} of '{desc}': {exc}")
     return ret
 
 

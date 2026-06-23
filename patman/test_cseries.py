@@ -9,6 +9,7 @@ import contextlib
 from datetime import datetime
 import os
 import re
+import types
 import unittest
 from unittest import mock
 
@@ -4931,37 +4932,40 @@ Date:   .*
             data['received_total'] = 1
         return data
 
-    def test_review_scan(self):
-        """Test --scan reviews a new version of an already-reviewed series"""
-        cser = self.get_cser()
-        pwork = Patchwork.for_testing(self._fake_patchwork_review)
-        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
-
-        # Review v1 first
+    def _review_v1(self, pwork, link=None):
+        """Review the given series in-process, to seed the database"""
         mocks = self._mock_review()
         with contextlib.ExitStack() as stack:
             for m in mocks:
                 stack.enter_context(m)
             with terminal.capture() as _:
-                self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork)
+                self.run_review('-s', str(link or self.REVIEW_LINK),
+                                pwork=pwork)
 
-        # Scanning should find and review v2
-        mocks = self._mock_review()
-        with contextlib.ExitStack() as stack:
-            for m in mocks:
-                stack.enter_context(m)
+    def test_review_scan(self):
+        """Test --scan launches a review of a new version"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review v1 first to record the series
+        self._review_v1(pwork)
+
+        # Scanning should launch a review of v2 in a child process
+        launched = []
+
+        def fake_sub(args, desc, version, link):
+            launched.append((version, link))
+            return review.ScanResult(desc, version, link, 0, 'reviewed v2')
+
+        with mock.patch('patman.review._review_one_subprocess',
+                        side_effect=fake_sub):
             with terminal.capture() as (out, _):
                 self.run_review('--scan', pwork=pwork)
-        self.assertIn('New version v2', out.getvalue())
-
-        # v2 is now recorded under the same series and has a review
-        self.db_open()
-        v1 = cser.db.series_find_by_link(str(self.REVIEW_LINK))
-        v2 = cser.db.series_find_by_link(str(self.REVIEW_LINK_V2))
-        self.assertIsNotNone(v2)
-        self.assertEqual(v1[0], v2[0])  # same series_id
-        self.assertEqual(2, v2[2])  # version 2
-        self.assertTrue(cser.db.review_get_for_version(v2[3]))
+        output = out.getvalue()
+        self.assertIn('New version v2', output)
+        self.assertIn('reviewed v2', output)
+        self.assertEqual([(2, self.REVIEW_LINK_V2)], launched)
 
     def test_review_scan_no_new(self):
         """Test --scan reports nothing when there is no newer version"""
@@ -4970,47 +4974,49 @@ Date:   .*
         pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
 
         # Review the latest version (v2)
-        mocks = self._mock_review()
-        with contextlib.ExitStack() as stack:
-            for m in mocks:
-                stack.enter_context(m)
-            with terminal.capture() as _:
-                self.run_review('-s', str(self.REVIEW_LINK_V2), pwork=pwork)
+        self._review_v1(pwork, self.REVIEW_LINK_V2)
 
-        mocks = self._mock_review()
-        with contextlib.ExitStack() as stack:
-            for m in mocks:
-                stack.enter_context(m)
+        with mock.patch('patman.review._review_one_subprocess') as mock_sub:
             with terminal.capture() as (out, _):
                 self.run_review('--scan', pwork=pwork)
         self.assertIn('No new versions found', out.getvalue())
+        mock_sub.assert_not_called()
 
     def test_review_scan_incomplete(self):
         """Test --scan waits when the newest version is incomplete"""
-        cser = self.get_cser()
+        self.get_cser()
         pwork = Patchwork.for_testing(self._fake_patchwork_review_incomplete)
         pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
 
         # Review v1 (complete)
-        mocks = self._mock_review()
-        with contextlib.ExitStack() as stack:
-            for m in mocks:
-                stack.enter_context(m)
-            with terminal.capture() as _:
-                self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork)
+        self._review_v1(pwork)
 
         # v2 is only partly on patchwork; scan should wait, not review it
-        mocks = self._mock_review()
-        with contextlib.ExitStack() as stack:
-            for m in mocks:
-                stack.enter_context(m)
+        with mock.patch('patman.review._review_one_subprocess') as mock_sub:
             with terminal.capture() as (out, _):
                 self.run_review('--scan', pwork=pwork)
         self.assertIn('Waiting for v2', out.getvalue())
+        mock_sub.assert_not_called()
 
-        # v2 was not reviewed
-        self.db_open()
-        self.assertIsNone(cser.db.series_find_by_link(str(self.REVIEW_LINK_V2)))
+    def test_review_scan_command(self):
+        """Test the child review command passes through the right options"""
+        args = types.SimpleNamespace(
+            project='myproj', patchwork_url='https://pw.example',
+            verbose=False, debug=False, upstream='us', reviewer=None,
+            base_branch=None, gmail_account=None, signoff='',
+            spelling='British', context=None, create_drafts=True)
+        cmd = review._build_review_command(args, self.REVIEW_LINK_V2)
+
+        self.assertEqual(['-m', 'patman'], cmd[1:3])
+        self.assertIn('review', cmd)
+        # Global options come before the subcommand
+        self.assertLess(cmd.index('-P'), cmd.index('review'))
+        self.assertEqual('https://pw.example', cmd[cmd.index('-P') + 1])
+        self.assertEqual('myproj', cmd[cmd.index('-p') + 1])
+        # Series and review options come after
+        self.assertEqual(str(self.REVIEW_LINK_V2), cmd[cmd.index('-s') + 1])
+        self.assertEqual('us', cmd[cmd.index('-U') + 1])
+        self.assertIn('--create-drafts', cmd)
 
     def test_review_lock_in_progress(self):
         """Test a review is refused when one is already running for it"""

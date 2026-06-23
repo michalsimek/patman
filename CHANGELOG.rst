@@ -12,9 +12,16 @@ Added
 ~~~~~
 - ``review --scan`` looks on patchwork for new versions of series that
   have already been reviewed and reviews the latest version, once it has
-  fully appeared on patchwork.
+  fully appeared on patchwork. Reviews run in parallel, each in its own
+  child process and worktree, up to ``--jobs`` at a time (default 4).
 - ``review --redraft`` recreates the Gmail drafts from the stored
   reviews even when a draft already exists, to recover after an error.
+
+Changed
+~~~~~~~
+- A review now takes an exclusive lock on its series, so a second review
+  of the same series is refused rather than corrupting its worktree and
+  records.
 
 0.0.11 - 2026-06-18
 -------------------

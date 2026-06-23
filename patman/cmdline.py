@@ -636,6 +636,10 @@ def add_review_subparser(subparsers):
         help='Scan patchwork for new versions of already-reviewed series '
              'and review the latest version once it has fully appeared')
     review.add_argument(
+        '-j', '--jobs', type=int, default=4,
+        help='Number of series to review in parallel with --scan '
+             '(default: 4)')
+    review.add_argument(
         '-f', '--force', action='store_true',
         help='Force re-review even if the series was already reviewed')
     review.add_argument(

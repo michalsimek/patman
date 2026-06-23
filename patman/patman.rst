@@ -1449,6 +1449,9 @@ fully appeared on patchwork; if the newest version is still arriving,
 the series is left to wait rather than reviewing an older, now
 superseded one.
 
+Reviews run in parallel, each in its own child process and review
+worktree, up to ``--jobs`` (``-j``) at a time (default 4).
+
 Review lifecycle
 ----------------
 
