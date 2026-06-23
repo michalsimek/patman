@@ -1340,6 +1340,11 @@ excluded from refinement to preserve their quoted commit messages.
 A mechanical cleanup step also runs to remove backticks and fix function
 quoting style (e.g. ``malloc()`` not ```malloc```).
 
+Only one review of a given series runs at a time. If a review for the
+same series is already in progress -- from another patman invocation or
+a scan -- the second is refused rather than corrupting the shared
+review worktree and database records.
+
 Apply step
 ~~~~~~~~~~
 

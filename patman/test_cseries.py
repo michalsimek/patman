@@ -5012,6 +5012,41 @@ Date:   .*
         self.db_open()
         self.assertIsNone(cser.db.series_find_by_link(str(self.REVIEW_LINK_V2)))
 
+    def test_review_lock_in_progress(self):
+        """Test a review is refused when one is already running for it"""
+        cser = self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Hold the lock for this series, as if a review were in progress
+        ups = pwork.upstream if pwork else None
+        branch = review._make_review_name(str(self.REVIEW_LINK), ups)
+        lock_fd = review._acquire_review_lock(self.tmpdir, branch)
+        try:
+            mocks = self._mock_review()
+            with contextlib.ExitStack() as stack:
+                for m in mocks:
+                    stack.enter_context(m)
+                with terminal.capture() as (out, err):
+                    self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork)
+            self.assertIn('already in progress', err.getvalue())
+        finally:
+            review._release_review_lock(lock_fd)
+
+        # The refused review recorded nothing
+        self.db_open()
+        self.assertIsNone(cser.db.series_find_by_link(str(self.REVIEW_LINK)))
+
+        # With the lock released, the review now runs
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as _:
+                self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork)
+        self.db_open()
+        self.assertIsNotNone(cser.db.series_find_by_link(str(self.REVIEW_LINK)))
+
     def _make_review_ctx(self, reviewer_name='Test', reviewer_email='test@test.com',
                          author_name='', author_email='', date='', signoff=None,
                          diffstat=None):

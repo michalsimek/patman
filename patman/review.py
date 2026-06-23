@@ -16,6 +16,7 @@ Gmail draft replies.
 import asyncio
 from collections import namedtuple
 from datetime import datetime
+import fcntl
 import os
 import re
 import tempfile
@@ -1997,11 +1998,58 @@ def _find_or_register(ctx, args, clean_name, link):
     return series_id, svid
 
 
+class ReviewInProgressError(Exception):
+    """Raised when another review of the same series is already running"""
+
+
+def _acquire_review_lock(repo, branch_name):
+    """Take an exclusive lock for a series review
+
+    The lock is a file locked with flock(), so the kernel releases it
+    automatically when patman exits or crashes, leaving no stale locks.
+    It stops two reviews of the same series running at once, whether from
+    --scan, parallel workers or a separate patman invocation.
+
+    Args:
+        repo (str): Top-level dir of the main checkout
+        branch_name (str): Review branch name, identifying the series
+
+    Returns:
+        int: Open file descriptor holding the lock; pass it to
+            _release_review_lock() when done
+
+    Raises:
+        ReviewInProgressError: if the lock is already held
+    """
+    path = os.path.join(repo, '.git', 'patman', 'locks',
+                        f'{branch_name}.lock')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        os.close(fd)
+        raise ReviewInProgressError(branch_name) from exc
+    return fd
+
+
+def _release_review_lock(fd):
+    """Release a review lock taken with _acquire_review_lock()
+
+    Args:
+        fd (int): File descriptor returned by _acquire_review_lock()
+    """
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+
 def _review_link(args, pwork, cser, link):
     """Run the main review flow for a single patchwork series
 
     Fetches the series, registers it (detecting an already-reviewed series
     or a new version), applies the patches in a worktree and reviews them.
+    The series is locked for the duration so a concurrent review of the
+    same series is refused rather than corrupting its worktree or records.
 
     Args:
         args (Namespace): Command-line arguments
@@ -2015,48 +2063,61 @@ def _review_link(args, pwork, cser, link):
     Raises:
         ValueError: if the series is incomplete (not all patches present)
     """
-    series_data, clean_name, version, patch_count = \
-        _fetch_series(pwork, link)
-
-    ctx = ReviewContext(pwork, cser, series_data)
-    ctx.version = version
-    ctx.patch_count = patch_count
-
-    result = _find_or_register(ctx, args, clean_name, link)
-    if result is None:
-        return 0
-    ctx.series_id, ctx.svid = result
-
-    ctx.upstream_branch = _get_upstream_branch(args, cser)
-    ctx.main_repo = gitutil.get_top_level()
     ups = pwork.upstream if pwork else None
-    ctx.branch_name = _make_review_name(link, ups)
-    wt_path = cser_helper.review_worktree_path(ctx.main_repo, ctx.branch_name)
-    tout.notice(f'Using review worktree {wt_path}')
-    ctx.repo_path = gitutil.ensure_worktree(
-        ctx.main_repo, wt_path, ctx.branch_name, ctx.upstream_branch)
-
-    if not _apply_and_check(ctx, link):
-        return 1
-
-    if args.apply_only:
-        tout.notice('Apply-only mode; skipping review')
+    branch_name = _make_review_name(link, ups)
+    main_repo = gitutil.get_top_level()
+    try:
+        lock_fd = _acquire_review_lock(main_repo, branch_name)
+    except ReviewInProgressError:
+        tout.warning(
+            f"A review of '{branch_name}' is already in progress; skipping")
         return 0
 
-    ctx.patch_selection = parse_patch_selection(args.patches)
-    ctx.reviewer_name, ctx.reviewer_email = _parse_reviewer(args)
-    ctx.signoff = args.signoff or None
-    if ctx.signoff:
-        ctx.signoff = ctx.signoff.replace('\\n', '\n')
-    ctx.spelling = args.spelling
-    ctx.context = _read_context(args.context) if args.context else None
-    ctx.comments_path = _write_comments_file(series_data, pwork)
+    try:
+        series_data, clean_name, version, patch_count = \
+            _fetch_series(pwork, link)
 
-    _run_and_store_reviews(ctx, args)
-    workflow.reviewed(cser, ctx.series_id, ctx.svid)
-    gitutil.remove_worktree(ctx.main_repo, wt_path)
+        ctx = ReviewContext(pwork, cser, series_data)
+        ctx.version = version
+        ctx.patch_count = patch_count
 
-    return 0
+        result = _find_or_register(ctx, args, clean_name, link)
+        if result is None:
+            return 0
+        ctx.series_id, ctx.svid = result
+
+        ctx.upstream_branch = _get_upstream_branch(args, cser)
+        ctx.main_repo = main_repo
+        ctx.branch_name = branch_name
+        wt_path = cser_helper.review_worktree_path(ctx.main_repo,
+                                                   ctx.branch_name)
+        tout.notice(f'Using review worktree {wt_path}')
+        ctx.repo_path = gitutil.ensure_worktree(
+            ctx.main_repo, wt_path, ctx.branch_name, ctx.upstream_branch)
+
+        if not _apply_and_check(ctx, link):
+            return 1
+
+        if args.apply_only:
+            tout.notice('Apply-only mode; skipping review')
+            return 0
+
+        ctx.patch_selection = parse_patch_selection(args.patches)
+        ctx.reviewer_name, ctx.reviewer_email = _parse_reviewer(args)
+        ctx.signoff = args.signoff or None
+        if ctx.signoff:
+            ctx.signoff = ctx.signoff.replace('\\n', '\n')
+        ctx.spelling = args.spelling
+        ctx.context = _read_context(args.context) if args.context else None
+        ctx.comments_path = _write_comments_file(series_data, pwork)
+
+        _run_and_store_reviews(ctx, args)
+        workflow.reviewed(cser, ctx.series_id, ctx.svid)
+        gitutil.remove_worktree(ctx.main_repo, wt_path)
+
+        return 0
+    finally:
+        _release_review_lock(lock_fd)
 
 
 def _scan_new_versions(pwork, cser):
