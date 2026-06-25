@@ -16,6 +16,20 @@ Added
   child process and worktree, up to ``--jobs`` at a time (default 4).
 - ``review --redraft`` recreates the Gmail drafts from the stored
   reviews even when a draft already exists, to recover after an error.
+- ``review --relink`` repairs a database where versions of a series were
+  stored as separate records, merging them so follow-up reviews see the
+  earlier feedback. It backs up the database first.
+
+Fixed
+~~~~~
+- A review stored each series version under its raw '[vN,0/M] ...' title,
+  so versions of one series did not link and each follow-up review ran
+  without the earlier feedback and raised fresh points. Store the cleaned
+  title instead, so versions link. Existing databases can be repaired
+  with ``review --relink``.
+- Prior-review context now comes from the most recent earlier version
+  that has reviews, rather than strictly the immediately previous one, so
+  a gap in the version history no longer drops the context.
 
 Changed
 ~~~~~~~

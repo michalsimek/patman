@@ -433,7 +433,8 @@ def do_review(args, test_db=None, pwork=None, cser=None):
         cser.open_database()
 
         # Resolve patchwork URL
-        if not pwork and not args.learn_voice and not args.sync:
+        if not pwork and not args.learn_voice and not args.sync \
+                and not args.relink:
             ups = args.upstream
             if not ups:
                 ups = cser.db.upstream_get_default()

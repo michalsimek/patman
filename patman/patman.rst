@@ -1483,8 +1483,17 @@ Each review goes through these states:
 - **replied**: Author or another reviewer has replied to our review
 
 When reviewing a new version of a previously reviewed series, patman
-loads the previous review as context for the AI, so it can check
-whether earlier issues have been addressed.
+loads the most recent earlier version that has reviews as context for
+the AI, so it can check whether earlier issues were addressed and avoid
+raising fresh points the earlier versions did not. Versions are linked
+by their cleaned cover-letter title.
+
+An older database may have stored each version as a separate, unlinked
+record, leaving follow-up reviews without this context. Repair it by
+merging the split records, which backs up the database (to
+``<db>.bak``) first::
+
+    patman review --relink
 
 Aliases
 -------

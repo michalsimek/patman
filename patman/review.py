@@ -20,6 +20,7 @@ from datetime import datetime
 import fcntl
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1699,9 +1700,11 @@ def _register_series(cser, clean_name, version, link, series_data,
         series_id = cser.db.series_find_by_name(
             branch_name, include_archived=True)
         if not series_id:
-            desc = series_data.get('cover_letter', {})
-            desc = desc.get('name', '') if desc else clean_name
-            series_id = cser.db.series_add(branch_name, desc, ups=upstream)
+            # Store the cleaned title (stable across versions) as the desc,
+            # not the raw '[vN,0/M] ...' cover-letter subject, so later
+            # versions link to this series via series_find_review_by_name()
+            series_id = cser.db.series_add(branch_name, clean_name,
+                                           ups=upstream)
         cser.db.series_set_source(series_id, 'review')
 
     svid = cser.db.ser_ver_add(series_id, version, link=str(link))
@@ -2351,11 +2354,56 @@ def _do_scan(args, pwork, cser):
     return 1 if failed else 0
 
 
+def _do_relink(args, cser):
+    """Merge review series that were split across versions
+
+    Older patman stored each version of a series under its own record,
+    keyed by the raw '[vN,0/M] ...' cover-letter subject, so the versions
+    of one series did not link and follow-up reviews had no earlier
+    feedback for context. Group the review series by their cleaned title,
+    merge each group into a single series holding all the versions and
+    clean the stored description. The database is backed up first.
+
+    Args:
+        args (Namespace): Command-line arguments (unused)
+        cser (Cseries): Open cseries instance
+
+    Returns:
+        int: 0 on success
+    """
+    backup = f'{cser.db.db_path}.bak'
+    shutil.copy2(cser.db.db_path, backup)
+    tout.notice(f'Backed up database to {backup}')
+
+    series = cser.db.series_get_dict(include_archived=True, reviews_only=True)
+    groups = {}
+    for ser in series.values():
+        groups.setdefault(_clean_series_name(ser.desc), []).append(ser)
+
+    merged = 0
+    cleaned = 0
+    for clean, group in groups.items():
+        group.sort(key=lambda ser: ser.idnum)
+        canon = group[0]
+        if canon.desc != clean:
+            cser.db.series_set_desc(canon.idnum, clean)
+            cleaned += 1
+        for other in group[1:]:
+            for svid in cser.db.ser_ver_get_svids(other.idnum):
+                cser.db.ser_ver_set_series(svid, canon.idnum)
+            cser.db.series_remove(other.idnum)
+            merged += 1
+    cser.commit()
+    tout.notice(f'Relinked {merged} duplicate series record(s); cleaned '
+                f'{cleaned} description(s)')
+    return 0
+
+
 def do_review(args, pwork, cser):
     """Run the review command
 
-    Dispatches to learn-voice, sync, scan, or the main review flow
-    which fetches, applies, reviews and optionally drafts.
+    Dispatches to learn-voice, sync, scan, relink, or the main review
+    flow which fetches, applies, reviews and optionally drafts.
 
     Args:
         args (Namespace): Command-line arguments
@@ -2367,6 +2415,9 @@ def do_review(args, pwork, cser):
 
     if args.sync:
         return _do_sync(args, cser)
+
+    if args.relink:
+        return _do_relink(args, cser)
 
     if args.scan:
         return _do_scan(args, pwork, cser)

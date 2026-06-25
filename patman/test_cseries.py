@@ -5092,6 +5092,73 @@ Date:   .*
         # The scan has already checked the state, so the child skips it
         self.assertIn('--any-state', cmd)
 
+    def test_register_series_cleans_desc(self):
+        """Test a series is stored under its cleaned title, not the cover name"""
+        cser = self.get_cser()
+        series_data = {
+            'patches': [{'id': 1, 'name': '[v2,1/1] foo bar'}],
+            'cover_letter': {'id': 9, 'name': '[v2,0/1] foo bar'},
+        }
+        # Two versions of the same series must land under one record
+        review._register_series(cser, 'foo bar', 1, '500', series_data)
+        review._register_series(cser, 'foo bar', 2, '501', series_data)
+        cser.commit()
+
+        self.db_open()
+        v1 = cser.db.series_find_by_link('500')
+        v2 = cser.db.series_find_by_link('501')
+        self.assertIsNotNone(v1)
+        self.assertIsNotNone(v2)
+        self.assertEqual(v1[0], v2[0])  # linked under the same series
+
+    def test_review_get_previous_skips_gap(self):
+        """Test prior-review lookup skips versions that have no reviews"""
+        cser = self.get_cser()
+        db = cser.db
+        sid = db.series_add('pw-x-review', 'foo bar')
+        db.series_set_source(sid, 'review')
+        sv1 = db.ser_ver_add(sid, 1, link='10')
+        db.review_add(sv1, 1, 'v1 body', 1, '2026-01-01')
+        db.ser_ver_add(sid, 2, link='11')  # v2 has no reviews
+        cser.commit()
+
+        # Reviewing v3 should fall back to v1, not the empty v2
+        prev = db.review_get_previous(sid, 3)
+        self.assertEqual(1, len(prev))
+        self.assertEqual('v1 body', prev[0].body)
+
+    def test_review_relink(self):
+        """Test --relink merges version records split by the old bug"""
+        cser = self.get_cser()
+        db = cser.db
+        # Simulate the old bug: two unlinked records, raw prefixed descs
+        s1 = db.series_add('pw-1-review', '[v1,0/2] foo bar')
+        db.series_set_source(s1, 'review')
+        sv1 = db.ser_ver_add(s1, 1, link='1')
+        db.review_add(sv1, 1, 'v1 body', 1, '2026-01-01')
+        s2 = db.series_add('pw-2-review', '[v2,0/3] foo bar')
+        db.series_set_source(s2, 'review')
+        sv2 = db.ser_ver_add(s2, 2, link='2')
+        db.review_add(sv2, 1, 'v2 body', 1, '2026-01-02')
+        cser.commit()
+
+        # Before: separate series, v2 has no prior context
+        self.assertNotEqual(s1, s2)
+        self.assertEqual([], db.review_get_previous(s2, 2))
+
+        with terminal.capture() as (out, _):
+            self.run_review('--relink')
+        self.assertIn('Relinked 1', out.getvalue())
+
+        # After: one series with both versions; v2 now sees v1's review
+        self.db_open()
+        v1 = cser.db.series_find_by_link('1')
+        v2 = cser.db.series_find_by_link('2')
+        self.assertEqual(v1[0], v2[0])
+        prev = cser.db.review_get_previous(v1[0], 2)
+        self.assertEqual(1, len(prev))
+        self.assertEqual('v1 body', prev[0].body)
+
     def test_review_lock_in_progress(self):
         """Test a review is refused when one is already running for it"""
         cser = self.get_cser()
