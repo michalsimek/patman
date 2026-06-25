@@ -2363,6 +2363,13 @@ def _do_scan(args, pwork, cser):
                         'to fully appear')
 
     total = len(to_review)
+    if getattr(args, 'dry_run', False):
+        for new in to_review:
+            tout.notice(f"Would review v{new.version} of '{new.desc}'")
+        tout.notice(f'Dry run: {len(found)} new, {total} to review, '
+                    f'{waiting} waiting, {skipped} skipped')
+        return 0
+
     failed = 0
     if total:
         jobs = max(1, getattr(args, 'jobs', 1))

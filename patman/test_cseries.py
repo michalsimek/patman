@@ -5033,6 +5033,24 @@ Date:   .*
                       output)
         self.assertEqual([(2, self.REVIEW_LINK_V2)], launched)
 
+    def test_review_scan_dry_run(self):
+        """Test --scan -n reports what it would do without reviewing"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review v1 first so v2 shows up as a new version
+        self._review_v1(pwork)
+
+        with mock.patch('patman.review._review_one_subprocess') as mock_sub:
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', '-n', pwork=pwork)
+        output = out.getvalue()
+        self.assertIn('Would review v2', output)
+        self.assertIn('Dry run: 1 new, 1 to review, 0 waiting, 0 skipped',
+                      output)
+        mock_sub.assert_not_called()
+
     def test_review_scan_no_new(self):
         """Test --scan reports nothing when there is no newer version"""
         self.get_cser()

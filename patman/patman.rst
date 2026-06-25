@@ -1477,6 +1477,9 @@ summary line::
 
     Scanned: 3 new, 1 reviewed, 1 waiting, 1 skipped, 0 failed
 
+Use ``-n`` / ``--dry-run`` to see which series would be reviewed,
+waiting or skipped, without launching any reviews.
+
 Review lifecycle
 ----------------
 

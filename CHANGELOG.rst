@@ -14,6 +14,8 @@ Added
   have already been reviewed and reviews the latest version, once it has
   fully appeared on patchwork. Reviews run in parallel, each in its own
   child process and worktree, up to ``--jobs`` at a time (default 4).
+  ``-n`` / ``--dry-run`` shows which series would be reviewed, waiting
+  or skipped, without launching any reviews.
 - ``review --redraft`` recreates the Gmail drafts from the stored
   reviews even when a draft already exists, to recover after an error.
 - ``review --relink`` repairs a database where versions of a series were
