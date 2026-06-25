@@ -2003,7 +2003,8 @@ def _find_or_register(ctx, args, clean_name, link):
 
 # Patchwork patch states worth reviewing: a series is reviewed only when at
 # least one of its patches is in one of these states
-ACTIVE_STATES = {'new', 'rfc'}
+ACTIVE_STATES = {'new', 'rfc', 'under-review', 'changes-requested',
+                 'needs-review-ack'}
 
 
 class ReviewInProgressError(Exception):

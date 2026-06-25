@@ -20,9 +20,10 @@ Added
 Changed
 ~~~~~~~
 - ``review`` only reviews a series when at least one of its patches is in
-  an active patchwork state (new or RFC); reviewing an inactive series
-  fails with a message naming ``--any-state``, which overrides the check.
-  ``review --scan`` skips inactive series.
+  an active patchwork state (new, RFC, under-review, changes-requested or
+  needs-review-ack); reviewing an inactive series fails with a message
+  naming ``--any-state``, which overrides the check. ``review --scan``
+  skips inactive series.
 - A review now takes an exclusive lock on its series, so a second review
   of the same series is refused rather than corrupting its worktree and
   records.

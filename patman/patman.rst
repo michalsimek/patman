@@ -1324,7 +1324,8 @@ Active series only
 ------------------
 
 By default patman only reviews a series when at least one of its
-patches is in an active patchwork state: new or RFC. Reviewing a series
+patches is in an active patchwork state: new, RFC, under-review,
+changes-requested or needs-review-ack. Reviewing a series
 that patchwork has finished with (accepted, superseded, rejected and so
 on) fails with a message naming the override. Use ``--any-state`` to
 review regardless::

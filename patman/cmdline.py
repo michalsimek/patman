@@ -645,7 +645,8 @@ def add_review_subparser(subparsers):
     review.add_argument(
         '--any-state', action='store_true',
         help='Review the series even if no patch is in an active state '
-             '(new/RFC)')
+             '(new, RFC, under-review, changes-requested or '
+             'needs-review-ack)')
     review.add_argument(
         '-c', '--context', type=str, default=None,
         help="Extra context for the review agent — e.g. 'this is RFC, "
