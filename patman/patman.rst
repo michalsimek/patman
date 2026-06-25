@@ -1295,6 +1295,9 @@ been reviewed and the drafts already exist::
 
     patman review -s 497923 --redraft --gmail-account your@email
 
+Any existing draft is deleted first, so it is not left as a duplicate
+in the thread.
+
 Use ``--apply-only`` to download and apply patches without running the
 AI review -- useful for checking that patches apply cleanly.
 
@@ -1315,6 +1318,9 @@ reviewed. This deletes the old review records and runs the review
 again::
 
     patman review -s 497923 -U us -f --reviewer 'Your Name <your@email>'
+
+With ``-d``, the Gmail drafts from the previous review are deleted too,
+so the re-review does not leave duplicates in the thread.
 
 If the reviewer email (from ``--reviewer`` or git config) differs from
 the ``--gmail-account``, patman sets the From header on the draft so

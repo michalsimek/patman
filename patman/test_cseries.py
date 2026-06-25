@@ -4924,10 +4924,66 @@ Date:   .*
         self.assertIn('Already reviewed', output)
         self.assertIn('All reviews already have Gmail drafts', output)
 
-        # --redraft recreates the drafts from the database
-        output = run('--redraft')
+        # --redraft deletes the old drafts and recreates them
+        with mock.patch('patman.gmail.delete_draft') as mock_del:
+            output = run('--redraft')
         self.assertIn('Already reviewed', output)
+        self.assertIn('Deleted 1 old Gmail draft', output)
         self.assertIn('Created 1 Gmail draft', output)
+        mock_del.assert_called_once()
+
+    def test_delete_gmail_drafts(self):
+        """Test only reviews that have a recorded draft are deleted"""
+        def rev(idnum, draft_id):
+            return database.Review(
+                idnum=idnum, svid=1, seq=idnum, body='b', approved=1,
+                timestamp='t', draft_id=draft_id, status='draft',
+                gmail_msg_id=None, gmail_thread_id=None)
+
+        reviews = [rev(1, 'd1'), rev(2, None), rev(3, 'd3')]
+        args = types.SimpleNamespace(gmail_account=None)
+        with mock.patch('patman.gmail.check_available', return_value=True), \
+                mock.patch('patman.gmail.get_service'), \
+                mock.patch('patman.gmail.delete_draft') as mock_del:
+            with terminal.capture() as (out, _):
+                review._delete_gmail_drafts(args, reviews)
+        self.assertEqual(2, mock_del.call_count)
+        self.assertIn('Deleted 2 old Gmail draft', out.getvalue())
+
+    def test_review_force_deletes_drafts(self):
+        """Test -f re-review removes the old Gmail drafts before recreating"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        def run(*extra):
+            mocks = self._mock_review()
+            with contextlib.ExitStack() as stack:
+                for m in mocks:
+                    stack.enter_context(m)
+                with mock.patch('patman.gmail.check_available',
+                                return_value=True), \
+                        mock.patch('patman.gmail.get_service') as mock_svc:
+                    mock_svc.return_value.users.return_value \
+                        .drafts.return_value.create.return_value \
+                        .execute.return_value = {'id': 'draft123'}
+                    mock_svc.return_value.users.return_value \
+                        .messages.return_value.list.return_value \
+                        .execute.return_value = {'messages': []}
+                    with terminal.capture() as (out, _):
+                        self.run_review('-s', str(self.REVIEW_LINK), *extra,
+                                        pwork=pwork)
+            return out.getvalue()
+
+        # First review creates a draft
+        self.assertIn('Created 1 Gmail draft', run('--create-drafts'))
+
+        # Forced re-review with -d deletes the old draft first
+        with mock.patch('patman.gmail.delete_draft') as mock_del:
+            output = run('-f', '--create-drafts')
+        self.assertIn('Re-reviewing (forced)', output)
+        self.assertIn('Deleted 1 old Gmail draft', output)
+        mock_del.assert_called_once()
 
     def _fake_patchwork_review_incomplete(self, subpath):
         """Fake Patchwork where v2 has not fully appeared yet"""

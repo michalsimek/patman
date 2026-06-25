@@ -1771,6 +1771,29 @@ def _fetch_series(pwork, link):
     return series_data, clean_name, version, patch_count
 
 
+def _delete_gmail_drafts(args, reviews):
+    """Delete the Gmail drafts recorded for the given reviews
+
+    Used when reviews are being replaced -- a forced re-review or a
+    redraft -- so the previous drafts do not linger in Gmail as
+    duplicates alongside the new ones. Reviews with no recorded draft
+    are ignored, and nothing happens if Gmail is unavailable.
+
+    Args:
+        args (Namespace): Command-line arguments (for gmail_account)
+        reviews (list of Review): Reviews whose recorded drafts to delete
+    """
+    draft_ids = [rev.draft_id for rev in reviews if rev.draft_id]
+    if not draft_ids:
+        return
+    if not gmail.check_available():
+        return
+    service = gmail.get_service(getattr(args, 'gmail_account', None))
+    for draft_id in draft_ids:
+        gmail.delete_draft(service, draft_id)
+    tout.notice(f'Deleted {len(draft_ids)} old Gmail draft(s)')
+
+
 def _draft_stored_reviews(args, reviews, series_data, pwork, cser):
     """Create Gmail drafts from stored review records
 
@@ -1793,6 +1816,10 @@ def _draft_stored_reviews(args, reviews, series_data, pwork, cser):
     if not need_draft:
         tout.notice('All reviews already have Gmail drafts')
         return
+    if args.redraft:
+        # Remove the drafts we are about to recreate so they do not linger
+        # as duplicates in the same Gmail thread
+        _delete_gmail_drafts(args, need_draft)
     review_bodies = {rev.seq: rev.body for rev in need_draft}
     review_ids = {rev.seq: rev.idnum
                   for rev in need_draft}
@@ -1998,6 +2025,10 @@ def _find_or_register(ctx, args, clean_name, link):
                                   ctx.cser)
         return None
 
+    if args.create_drafts:
+        # The old drafts would otherwise be orphaned in Gmail when the
+        # review records that track them are deleted below
+        _delete_gmail_drafts(args, reviews)
     ctx.cser.db.review_delete_for_version(svid)
     ctx.cser.commit()
     tout.notice('Re-reviewing (forced)')

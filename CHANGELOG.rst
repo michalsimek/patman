@@ -30,6 +30,9 @@ Fixed
 - Prior-review context now comes from the most recent earlier version
   that has reviews, rather than strictly the immediately previous one, so
   a gap in the version history no longer drops the context.
+- ``review -f`` and ``review --redraft`` delete the Gmail drafts they
+  replace, instead of leaving the old ones orphaned as duplicates in the
+  same thread.
 
 Changed
 ~~~~~~~
