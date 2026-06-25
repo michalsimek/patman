@@ -1355,6 +1355,10 @@ over the drafts to tighten the language, remove cross-patch duplicates
 and check voice consistency. Approved reviews without comments are
 excluded from refinement to preserve their quoted commit messages.
 
+If the agent has nothing to say about a patch -- no comments and not an
+approval -- no review is produced for it, rather than an empty
+greeting-only reply.
+
 A mechanical cleanup step also runs to remove backticks and fix function
 quoting style (e.g. ``malloc()`` not ```malloc```).
 

@@ -1096,7 +1096,7 @@ async def _review_single_patch(ctx, cmt, seq, all_commits):
         all_commits (list): (seq, hash, subject) tuples
 
     Returns:
-        str: Review body text
+        str or None: Review body text, or None if there is nothing to say
     """
     body = cmt.msg.strip()
     if body.startswith(cmt.subject):
@@ -1115,6 +1115,11 @@ async def _review_single_patch(ctx, cmt, seq, all_commits):
     if not success or not log.strip():
         return '(Review failed — please review manually)'
     greeting, verdict, comments = parse_review_output(log)
+    # A non-approval with no comments has nothing to say (just a greeting
+    # and the quoted commit message); drop it rather than sending an empty
+    # review
+    if verdict != 'approved' and not comments:
+        return None
     return format_review_email(ctx, greeting, verdict, comments, commit_msg)
 
 
@@ -1203,8 +1208,11 @@ async def review_patches(ctx):
 
         tout.notice(f'Reviewing patch {seq}/{len(commits)}...')
 
-        review_bodies[seq] = await _review_single_patch(ctx, cmt, seq,
-                                                          all_commits)
+        body = await _review_single_patch(ctx, cmt, seq, all_commits)
+        if body:
+            review_bodies[seq] = body
+        else:
+            tout.notice(f'  Nothing to say on patch {seq}; skipping')
 
     return review_bodies
 

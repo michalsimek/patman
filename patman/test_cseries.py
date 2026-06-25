@@ -5317,6 +5317,37 @@ VERDICT: skip"""
         self.assertEqual('skip', verdict)
         self.assertEqual([], comments)
 
+    def test_review_empty_dropped(self):
+        """Test a non-approval with no comments yields no review"""
+        from patman import review as review_mod
+
+        ctx = self._make_review_ctx(author_name='Quentin',
+            author_email='qstrydom0@gmail.com', date='2026-06-19')
+        ctx.repo_path = self.tmpdir
+        ctx.previous_reviews = {}
+        cmt = types.SimpleNamespace(hash='abc1234', subject='spl: pad',
+                                    msg='spl: pad\n\nbody text', rtags={})
+
+        async def mock_agent(prompt, options):
+            # A greeting but no COMMENT block and no VERDICT line
+            return True, 'GREETING: Quentin\n'
+
+        loop = asyncio.new_event_loop()
+        with mock.patch.object(review_mod.claude_mod, 'run_agent_collect',
+                               side_effect=mock_agent), \
+             mock.patch.object(review_mod, 'ClaudeAgentOptions',
+                               mock.MagicMock()), \
+             mock.patch.object(review_mod, '_build_review_prompt',
+                               return_value='prompt'), \
+             mock.patch.object(review_mod.gitutil, 'diff_stat',
+                               return_value=''), \
+             terminal.capture():
+            result = loop.run_until_complete(
+                review_mod._review_single_patch(
+                    ctx, cmt, 1, [(1, 'abc1234', 'spl: pad')]))
+        loop.close()
+        self.assertIsNone(result)
+
     def test_review_guess_name(self):
         """Test guessing first name from email address"""
         from patman.review import guess_name_from_email

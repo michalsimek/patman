@@ -35,6 +35,9 @@ Fixed
 - ``review -f`` and ``review --redraft`` delete the Gmail drafts they
   replace, instead of leaving the old ones orphaned as duplicates in the
   same thread.
+- A patch the review agent has nothing to say about (no comments and not
+  an approval) no longer produces an empty greeting-only review; the
+  patch is left unreviewed instead.
 
 Changed
 ~~~~~~~
