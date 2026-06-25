@@ -1320,6 +1320,17 @@ If the reviewer email (from ``--reviewer`` or git config) differs from
 the ``--gmail-account``, patman sets the From header on the draft so
 the email is sent with the correct identity.
 
+Active series only
+------------------
+
+By default patman only reviews a series when at least one of its
+patches is in an active patchwork state: new or RFC. Reviewing a series
+that patchwork has finished with (accepted, superseded, rejected and so
+on) fails with a message naming the override. Use ``--any-state`` to
+review regardless::
+
+    patman review -s 497923 --any-state
+
 How the review works
 --------------------
 
@@ -1447,7 +1458,8 @@ For each reviewed series it takes the highest version on patchwork
 above the latest one reviewed. A version is reviewed only once it has
 fully appeared on patchwork; if the newest version is still arriving,
 the series is left to wait rather than reviewing an older, now
-superseded one.
+superseded one. Inactive series (see `Active series only`_) are
+skipped.
 
 Reviews run in parallel, each in its own child process and review
 worktree, up to ``--jobs`` (``-j``) at a time (default 4).
@@ -1456,7 +1468,7 @@ Each review's output is buffered and printed as one block when it
 finishes, prefixed with a ``[done/total]`` counter and ending with a
 summary line::
 
-    Scanned: 3 new, 1 reviewed, 1 waiting, 0 failed
+    Scanned: 3 new, 1 reviewed, 1 waiting, 1 skipped, 0 failed
 
 Review lifecycle
 ----------------

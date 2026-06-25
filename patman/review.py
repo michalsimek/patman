@@ -2001,8 +2001,31 @@ def _find_or_register(ctx, args, clean_name, link):
     return series_id, svid
 
 
+# Patchwork patch states worth reviewing: a series is reviewed only when at
+# least one of its patches is in one of these states
+ACTIVE_STATES = {'new', 'rfc'}
+
+
 class ReviewInProgressError(Exception):
     """Raised when another review of the same series is already running"""
+
+
+def _get_patch_states(pwork, link):
+    """Get the patchwork state of each patch in a series
+
+    Args:
+        pwork (Patchwork): Configured patchwork instance
+        link (str): Patchwork series link/ID
+
+    Returns:
+        list of str: State slug for each patch
+    """
+    async def _fetch():
+        async with aiohttp.ClientSession() as client:
+            return await pwork.get_series_patch_states(client, link)
+
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(_fetch())
 
 
 def _acquire_review_lock(repo, branch_name):
@@ -2080,6 +2103,15 @@ def _review_link(args, pwork, cser, link):
         series_data, clean_name, version, patch_count = \
             _fetch_series(pwork, link)
 
+        if not getattr(args, 'any_state', False):
+            states = _get_patch_states(pwork, link)
+            if not any(state in ACTIVE_STATES for state in states):
+                shown = ', '.join(sorted({s for s in states if s})) or 'none'
+                raise ValueError(
+                    f"Series '{clean_name}' is not active on patchwork "
+                    f'(patch states: {shown}); use --any-state to review it '
+                    'anyway')
+
         ctx = ReviewContext(pwork, cser, series_data)
         ctx.version = version
         ctx.patch_count = patch_count
@@ -2123,7 +2155,7 @@ def _review_link(args, pwork, cser, link):
         _release_review_lock(lock_fd)
 
 
-NewVersion = namedtuple('NewVersion', 'desc,version,link,complete')
+NewVersion = namedtuple('NewVersion', 'desc,version,link,complete,active')
 
 ScanResult = namedtuple('ScanResult', 'desc,version,link,returncode,output')
 
@@ -2161,8 +2193,12 @@ def _scan_new_versions(pwork, cser):
                 data = await pwork.get_series(client, latest['id'])
                 received = data.get('received_total', 0)
                 total = data.get('total', received)
+                states = await pwork.get_series_patch_states(
+                    client, latest['id'])
+                active = any(state in ACTIVE_STATES for state in states)
                 found.append(NewVersion(ser.desc, int(latest['version']),
-                                        latest['id'], received >= total))
+                                        latest['id'], received >= total,
+                                        active))
 
     loop = asyncio.get_event_loop()
     loop.run_until_complete(_scan())
@@ -2193,7 +2229,8 @@ def _build_review_command(args, link):
         cmd.append('-v')
     if getattr(args, 'debug', False):
         cmd.append('-D')
-    cmd += ['review', '-s', str(link)]
+    # The scan has already checked the patch state, so the child need not
+    cmd += ['review', '-s', str(link), '--any-state']
     if getattr(args, 'upstream', None):
         cmd += ['-U', args.upstream]
     if getattr(args, 'reviewer', None):
@@ -2273,10 +2310,16 @@ def _do_scan(args, pwork, cser):
         tout.notice('No new versions found')
         return 0
 
+    any_state = getattr(args, 'any_state', False)
     to_review = []
     waiting = 0
+    skipped = 0
     for new in found:
-        if new.complete:
+        if not new.active and not any_state:
+            skipped += 1
+            tout.notice(f"Skipping v{new.version} of '{new.desc}' "
+                        '(not active on patchwork)')
+        elif new.complete:
             tout.notice(f"New version v{new.version} of '{new.desc}'")
             to_review.append(new)
         else:
@@ -2303,7 +2346,7 @@ def _do_scan(args, pwork, cser):
                     failed += 1
 
     tout.notice(f'Scanned: {len(found)} new, {total - failed} reviewed, '
-                f'{waiting} waiting, {failed} failed')
+                f'{waiting} waiting, {skipped} skipped, {failed} failed')
     return 1 if failed else 0
 
 

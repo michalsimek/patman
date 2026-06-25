@@ -4667,6 +4667,12 @@ Date:   .*
             raise ValueError(
                 f'Fake Patchwork unknown series_id: {series_id}')
 
+        m_pstate = re.match(r'patches/\?series=(\d+)$', subpath)
+        if m_pstate:
+            sid = int(m_pstate.group(1))
+            states = getattr(self, 'review_states', {}).get(sid, ['new'])
+            return [{'id': i, 'state': st} for i, st in enumerate(states)]
+
         m_patch = re.match(r'patches/(\d+)/$', subpath)
         if m_patch:
             return {
@@ -4967,7 +4973,7 @@ Date:   .*
         self.assertIn('Launching 1 review(s), 1 at a time', output)
         self.assertIn('[1/1]', output)
         self.assertIn('reviewed v2', output)
-        self.assertIn('Scanned: 1 new, 1 reviewed, 0 waiting, 0 failed',
+        self.assertIn('Scanned: 1 new, 1 reviewed, 0 waiting, 0 skipped, 0 failed',
                       output)
         self.assertEqual([(2, self.REVIEW_LINK_V2)], launched)
 
@@ -5001,8 +5007,67 @@ Date:   .*
                 self.run_review('--scan', pwork=pwork)
         output = out.getvalue()
         self.assertIn('Waiting for v2', output)
-        self.assertIn('Scanned: 1 new, 0 reviewed, 1 waiting, 0 failed',
+        self.assertIn('Scanned: 1 new, 0 reviewed, 1 waiting, 0 skipped, 0 failed',
                       output)
+        mock_sub.assert_not_called()
+
+    def test_review_inactive_refused(self):
+        """Test reviewing a non-active series is refused with the flag named"""
+        cser = self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+        self.review_states = {self.REVIEW_LINK: ['superseded']}
+
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as (out, _):
+                self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork,
+                                expect_ret=1)
+        output = out.getvalue()
+        self.assertIn('not active', output)
+        self.assertIn('--any-state', output)
+
+        # Nothing was recorded
+        self.db_open()
+        self.assertIsNone(cser.db.series_find_by_link(str(self.REVIEW_LINK)))
+
+    def test_review_inactive_any_state(self):
+        """Test --any-state reviews a non-active series anyway"""
+        cser = self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+        self.review_states = {self.REVIEW_LINK: ['superseded']}
+
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as _:
+                self.run_review('-s', str(self.REVIEW_LINK), '--any-state',
+                                pwork=pwork)
+        self.db_open()
+        self.assertIsNotNone(cser.db.series_find_by_link(str(self.REVIEW_LINK)))
+
+    def test_review_scan_skips_inactive(self):
+        """Test --scan skips a new version that is not active"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review v1 first (active)
+        self._review_v1(pwork)
+
+        # v2 has appeared but is not in an active state
+        self.review_states = {self.REVIEW_LINK_V2: ['superseded']}
+        with mock.patch('patman.review._review_one_subprocess') as mock_sub:
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', pwork=pwork)
+        output = out.getvalue()
+        self.assertIn('Skipping v2', output)
+        self.assertIn('Scanned: 1 new, 0 reviewed, 0 waiting, 1 skipped, '
+                      '0 failed', output)
         mock_sub.assert_not_called()
 
     def test_review_scan_command(self):
@@ -5024,6 +5089,8 @@ Date:   .*
         self.assertEqual(str(self.REVIEW_LINK_V2), cmd[cmd.index('-s') + 1])
         self.assertEqual('us', cmd[cmd.index('-U') + 1])
         self.assertIn('--create-drafts', cmd)
+        # The scan has already checked the state, so the child skips it
+        self.assertIn('--any-state', cmd)
 
     def test_review_lock_in_progress(self):
         """Test a review is refused when one is already running for it"""

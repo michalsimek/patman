@@ -643,6 +643,10 @@ def add_review_subparser(subparsers):
         '-f', '--force', action='store_true',
         help='Force re-review even if the series was already reviewed')
     review.add_argument(
+        '--any-state', action='store_true',
+        help='Review the series even if no patch is in an active state '
+             '(new/RFC)')
+    review.add_argument(
         '-c', '--context', type=str, default=None,
         help="Extra context for the review agent — e.g. 'this is RFC, "
              "ignore whitespace'. Use '@path' to read from a file.")
