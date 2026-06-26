@@ -441,6 +441,9 @@ Rules:
     > +#include <foo.h>
 
     This include is unnecessary.
+- To comment on the commit message itself (not the code), quote the
+  relevant commit-message line(s) with '> ' and no diff header. Such
+  comments are placed before the code comments in the email
 - Quote enough context from the diff to identify the location
 - CRITICAL: Every quoted line MUST be copied EXACTLY from the output
   of 'git show {commit_hash}'. Do NOT reconstruct, paraphrase, or
@@ -740,6 +743,26 @@ def _format_approved(ctx, commit_message=None, diffstat=None):
     return '\n'.join(lines)
 
 
+def _is_code_comment(hunk):
+    """Return True if a comment's quoted hunk refers to the code diff
+
+    Code comments quote the diff and so include a 'diff --git' or '@@'
+    header line; comments on the commit message quote prose without one.
+
+    Args:
+        hunk (str): Quoted lines for the comment (each prefixed with '> ')
+
+    Returns:
+        bool: True for a comment on the code, False for one on the commit
+            message (or a general comment with no quoted code)
+    """
+    for line in hunk.splitlines():
+        stripped = line.lstrip('> ').rstrip()
+        if stripped.startswith('diff --git ') or stripped.startswith('@@ '):
+            return True
+    return False
+
+
 def _format_with_comments(ctx, greeting, verdict, comments,
                           commit_message=None):
     """Format a review that has comments
@@ -776,7 +799,10 @@ def _format_with_comments(ctx, greeting, verdict, comments,
                 lines.append(f'> {dl}')
     lines.append('')
 
-    for hunk, comment in comments:
+    # Comments on the commit message come before comments on the code.
+    # sorted() is stable, so the relative order within each group is kept
+    ordered = sorted(comments, key=lambda hc: _is_code_comment(hc[0]))
+    for hunk, comment in ordered:
         if hunk:
             lines.append(hunk)
             lines.append('')

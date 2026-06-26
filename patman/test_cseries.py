@@ -5348,6 +5348,34 @@ VERDICT: skip"""
         loop.close()
         self.assertIsNone(result)
 
+    def test_review_is_code_comment(self):
+        """Test code comments are told apart from commit-message comments"""
+        from patman.review import _is_code_comment
+
+        self.assertTrue(_is_code_comment(
+            '> diff --git a/foo.c b/foo.c\n> @@ -1 +1 @@\n> +code'))
+        self.assertTrue(_is_code_comment('> @@ -10,2 +10,3 @@ func()'))
+        self.assertFalse(_is_code_comment(
+            '> When CONFIG_SPL_SEPARATE_BSS is enabled'))
+        self.assertFalse(_is_code_comment(''))
+
+    def test_review_commit_msg_comment_first(self):
+        """Test commit-message comments come before code comments"""
+        from patman.review import format_review_email
+
+        ctx = self._make_review_ctx(author_name='Quentin',
+            author_email='q@gmail.com', date='2026-06-19')
+        # Agent emitted the code comment first, commit-message comment second
+        comments = [
+            ('> diff --git a/foo.c b/foo.c\n> @@ -1 +1 @@\n> +code line',
+             'This code comment.'),
+            ('> When CONFIG_SPL_SEPARATE_BSS is enabled',
+             'This commit-message comment.'),
+        ]
+        body = format_review_email(ctx, 'Quentin', 'changes_needed', comments)
+        self.assertLess(body.index('This commit-message comment.'),
+                        body.index('This code comment.'))
+
     def test_review_guess_name(self):
         """Test guessing first name from email address"""
         from patman.review import guess_name_from_email

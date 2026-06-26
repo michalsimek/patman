@@ -1359,6 +1359,9 @@ If the agent has nothing to say about a patch -- no comments and not an
 approval -- no review is produced for it, rather than an empty
 greeting-only reply.
 
+Comments on the commit message are placed before comments on the code,
+matching the usual reply order.
+
 A mechanical cleanup step also runs to remove backticks and fix function
 quoting style (e.g. ``malloc()`` not ```malloc```).
 

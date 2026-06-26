@@ -38,6 +38,8 @@ Fixed
 - A patch the review agent has nothing to say about (no comments and not
   an approval) no longer produces an empty greeting-only review; the
   patch is left unreviewed instead.
+- Comments on the commit message are now placed before comments on the
+  code in a review, rather than in whatever order the agent emitted them.
 
 Changed
 ~~~~~~~
