@@ -33,6 +33,7 @@ from u_boot_pylib import terminal
 from u_boot_pylib import tools
 from u_boot_pylib import tout
 
+from patman import coverity
 from patman import cser_helper
 from patman import database
 from patman import gmail
@@ -94,6 +95,7 @@ class ReviewContext:  # pylint: disable=R0902
         self.previous_reviews = {}
         self.diffstat = None
         self.context = None
+        self.coverity_text = None
 
     @property
     def reviewer_tag(self):
@@ -356,6 +358,16 @@ USER CONTEXT (extra notes from the reviewer for this run):
 {ctx.context}
 '''
 
+    coverity_section = ''
+    if getattr(ctx, 'coverity_text', None):
+        coverity_section = f'''
+COVERITY (new static-analysis defects introduced by this series):
+{ctx.coverity_text}
+
+If any of these defects fall in the code this patch changes, raise them
+in your review. Ignore defects unrelated to this patch.
+'''
+
     return f'''You are an experienced U-Boot developer reviewing \
 a patch submitted to
 the U-Boot mailing list. This is patch {seq}/{len(all_commits)} in the series.
@@ -393,7 +405,7 @@ IMPORTANT:
    - Commit message quality: Is it clear, using present/imperative
      tense? Does it explain the motivation?
    - API usage: Are U-Boot APIs used correctly?
-{cover_section}{prev_section}{context_section}
+{cover_section}{prev_section}{context_section}{coverity_section}
 OUTPUT FORMAT:
 Your response MUST use this exact structured format, with no other text
 before or after. Start with a GREETING line containing the patch
@@ -1966,6 +1978,57 @@ def _fetch_cover_content(pwork, series_data):
     return loop.run_until_complete(_fetch())
 
 
+def _run_coverity(ctx, args):
+    """Analyse the series with Coverity and summarise the new defects
+
+    Builds and analyses the base branch and the patched branch, then
+    returns a bullet-list summary of the defects the series introduces,
+    for use as review context.
+
+    Args:
+        ctx (ReviewContext): Review context (uses main_repo, repo_path,
+            upstream_branch)
+        args (Namespace): Command-line arguments (coverity_defconfig)
+
+    Returns:
+        str or None: Summary of new defects, or None if Coverity is
+            unavailable or finds nothing new
+    """
+    if not coverity.check_available():
+        tout.warning('Coverity tools (cov-build/cov-analyze) not found on '
+                     'PATH; skipping --coverity')
+        return None
+
+    defconfig = getattr(args, 'coverity_defconfig', None) or \
+        coverity.DEFAULT_DEFCONFIG
+    tout.notice(f'Running Coverity ({defconfig}) on the base and the '
+                'series; this builds twice and may take a while...')
+    with tempfile.TemporaryDirectory() as tmp:
+        base_wt = os.path.join(tmp, 'base')
+        # Check out the base detached in its own worktree so the build
+        # does not disturb the review worktree
+        subprocess.run(
+            ['git', '-C', ctx.main_repo, 'worktree', 'add', '--detach',
+             base_wt, ctx.upstream_branch],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True)
+        try:
+            base = coverity.analyze(base_wt, defconfig,
+                                    os.path.join(tmp, 'cov-base'))
+            patched = coverity.analyze(ctx.repo_path, defconfig,
+                                       os.path.join(tmp, 'cov-patched'))
+        finally:
+            gitutil.remove_worktree(ctx.main_repo, base_wt)
+
+    new = coverity.find_new_defects(base, patched)
+    if not new:
+        tout.notice('Coverity: no new defects introduced by the series')
+        return None
+    tout.notice(f'Coverity: {len(new)} new defect(s) introduced by the '
+                'series')
+    return coverity.format_defects(new)
+
+
 def _run_and_store_reviews(ctx, args):
     """Run AI review, refine, store and display results
 
@@ -2214,6 +2277,9 @@ def _review_link(args, pwork, cser, link):
         ctx.spelling = args.spelling
         ctx.context = _read_context(args.context) if args.context else None
         ctx.comments_path = _write_comments_file(series_data, pwork)
+
+        if getattr(args, 'coverity', False):
+            ctx.coverity_text = _run_coverity(ctx, args)
 
         _run_and_store_reviews(ctx, args)
         workflow.reviewed(cser, ctx.series_id, ctx.svid)

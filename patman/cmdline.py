@@ -612,6 +612,14 @@ def add_review_subparser(subparsers):
         '--apply-only', action='store_true',
         help='Only download and apply patches, skip AI review')
     review.add_argument(
+        '--coverity', action='store_true',
+        help='Run Coverity on the base and the series, and feed the new '
+             'defects into the review (needs the cov-* tools on PATH)')
+    review.add_argument(
+        '--coverity-defconfig', type=str, default=None,
+        help='Board defconfig to build for --coverity '
+             '(default: sandbox_defconfig)')
+    review.add_argument(
         '--signoff', type=str, default='',
         help="Sign-off for reviews with comments (from .patman settings)")
     review.add_argument(

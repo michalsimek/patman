@@ -5376,6 +5376,113 @@ VERDICT: skip"""
         self.assertLess(body.index('This commit-message comment.'),
                         body.index('This code comment.'))
 
+    def test_coverity_find_new_defects(self):
+        """Test only defects absent from the base are reported as new"""
+        from patman import coverity
+        base = [{'mergeKey': 'a'}, {'mergeKey': 'b'}]
+        patched = [{'mergeKey': 'a'}, {'mergeKey': 'c'}]
+        new = coverity.find_new_defects(base, patched)
+        self.assertEqual([{'mergeKey': 'c'}], new)
+
+    def test_coverity_format_defect(self):
+        """Test a defect is summarised with checker, location and text"""
+        from patman import coverity
+        defect = {
+            'checkerName': 'RESOURCE_LEAK',
+            'mainEventFilePathname': 'drivers/foo.c',
+            'mainEventLineNumber': 42,
+            'functionDisplayName': 'foo_probe',
+            'subcategoryLongDescription': 'Handle leaked',
+        }
+        summary = coverity.format_defect(defect)
+        self.assertEqual(
+            'RESOURCE_LEAK: drivers/foo.c:42 (foo_probe): Handle leaked',
+            summary)
+
+    def test_coverity_check_available(self):
+        """Test availability depends on all three cov tools being present"""
+        from patman import coverity
+        with mock.patch('patman.coverity.shutil.which',
+                        return_value='/usr/bin/x'):
+            self.assertTrue(coverity.check_available())
+        with mock.patch('patman.coverity.shutil.which', return_value=None):
+            self.assertFalse(coverity.check_available())
+
+    def test_coverity_analyze(self):
+        """Test analyze() configures, builds under cov-build and parses"""
+        import json
+        from patman import coverity
+        emit = os.path.join(self.tmpdir, 'emit')
+        os.makedirs(emit, exist_ok=True)
+        cmds = []
+
+        def fake_run(cmd, cwd):
+            cmds.append(cmd)
+            if cmd[0] == 'cov-format-errors':
+                out = cmd[cmd.index('--json-output-v7') + 1]
+                with open(out, 'w', encoding='utf-8') as fd:
+                    json.dump({'issues': [{'mergeKey': 'k1'}]}, fd)
+
+        with mock.patch('patman.coverity._run', side_effect=fake_run):
+            issues = coverity.analyze(self.tmpdir, 'sandbox_defconfig', emit)
+        self.assertEqual([{'mergeKey': 'k1'}], issues)
+        self.assertEqual(['make', 'sandbox_defconfig'], cmds[0])
+        self.assertEqual('cov-build', cmds[1][0])
+        self.assertEqual('cov-analyze', cmds[2][0])
+
+    def test_run_coverity_unavailable(self):
+        """Test --coverity is skipped cleanly when the tools are missing"""
+        from patman import review as review_mod
+        ctx = self._make_review_ctx()
+        args = types.SimpleNamespace(coverity_defconfig=None)
+        with mock.patch('patman.coverity.check_available',
+                        return_value=False):
+            with terminal.capture() as (out, err):
+                result = review_mod._run_coverity(ctx, args)
+        self.assertIsNone(result)
+        self.assertIn('skipping --coverity', err.getvalue())
+
+    def test_run_coverity_reports_new(self):
+        """Test _run_coverity returns a summary of the new defects only"""
+        from patman import review as review_mod
+        ctx = self._make_review_ctx()
+        ctx.main_repo = self.tmpdir
+        ctx.repo_path = self.tmpdir
+        ctx.upstream_branch = 'us/master'
+        base = [{'mergeKey': 'a'}]
+        patched = [
+            {'mergeKey': 'a'},
+            {'mergeKey': 'b', 'checkerName': 'RESOURCE_LEAK',
+             'mainEventFilePathname': 'drivers/foo.c',
+             'mainEventLineNumber': 42,
+             'subcategoryLongDescription': 'Handle leaked'},
+        ]
+        args = types.SimpleNamespace(coverity_defconfig=None)
+        with mock.patch('patman.coverity.check_available',
+                        return_value=True), \
+                mock.patch('patman.coverity.analyze',
+                           side_effect=[base, patched]), \
+                mock.patch('patman.review.subprocess.run'), \
+                mock.patch('patman.review.gitutil.remove_worktree'):
+            with terminal.capture():
+                text = review_mod._run_coverity(ctx, args)
+        self.assertIn('RESOURCE_LEAK', text)
+        self.assertIn('drivers/foo.c:42', text)
+        self.assertNotIn('mergeKey', text)
+
+    def test_review_prompt_coverity(self):
+        """Test new Coverity defects are placed in the review prompt"""
+        from patman import review as review_mod
+        ctx = self._make_review_ctx()
+        ctx.comments_path = None
+        ctx.spelling = 'British'
+        ctx.coverity_text = '- RESOURCE_LEAK: drivers/foo.c:42: Handle leaked'
+        with mock.patch.object(review_mod, 'get_voice', return_value=None):
+            prompt = review_mod._build_review_prompt(
+                ctx, 'abc1234', 1, [(1, 'abc1234', 'subj')], None)
+        self.assertIn('COVERITY', prompt)
+        self.assertIn('drivers/foo.c:42', prompt)
+
     def test_review_guess_name(self):
         """Test guessing first name from email address"""
         from patman.review import guess_name_from_email

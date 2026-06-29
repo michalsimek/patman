@@ -1385,6 +1385,27 @@ aborting. Fix the conflicts manually and retry.`` The database row
 for the new version is rolled back so a retry starts from a clean
 state.
 
+Coverity static analysis
+------------------------
+
+With ``--coverity``, patman runs Coverity on the series and feeds the
+new defects into the review. Coverity analyses a whole build rather
+than a diff, so patman builds and analyses the base branch and the
+patched branch separately and reports only the defects the series
+introduces (matched by Coverity's mergeKey)::
+
+    patman review -s 497923 -U us --coverity \
+        --reviewer 'Your Name <your@email>'
+
+This needs the ``cov-build``, ``cov-analyze`` and ``cov-format-errors``
+tools on your PATH; if they are missing the check is skipped with a
+warning. The build uses ``sandbox_defconfig`` by default; use
+``--coverity-defconfig`` to pick another board. Building twice makes
+this much slower than a normal review.
+
+The new defects are passed to the review agent as context, so it can
+raise the ones that fall in the code each patch changes.
+
 Patchwork subcommands
 ---------------------
 

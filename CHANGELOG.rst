@@ -10,6 +10,10 @@ Unreleased
 
 Added
 ~~~~~
+- ``review --coverity`` runs Coverity on the base and the patched series
+  and feeds the newly introduced defects into the review as context.
+  ``--coverity-defconfig`` selects the board to build (default
+  sandbox_defconfig). Needs the cov-* tools on PATH.
 - ``review --scan`` looks on patchwork for new versions of series that
   have already been reviewed and reviews the latest version, once it has
   fully appeared on patchwork. Reviews run in parallel, each in its own
