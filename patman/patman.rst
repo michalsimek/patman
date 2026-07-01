@@ -1378,12 +1378,16 @@ changes -- including untracked files -- so build artefacts on the
 current branch don't leak into the review. The original branch and
 stash are restored at the end of the run, including on failure.
 
-If the apply agent finishes but the resulting branch holds fewer
-commits than the series cover letter advertises, patman aborts with a
-message of the form ``Only N of M patches applied to <branch>;
-aborting. Fix the conflicts manually and retry.`` The database row
-for the new version is rolled back so a retry starts from a clean
-state.
+If the apply agent applies some but not all of the patches -- for
+example one depends on a prerequisite series that is not yet upstream
+-- patman warns (``Only N of M patches applied to <branch>; reviewing
+what is there``) and reviews the patches that did apply. Only when
+nothing applies at all does it fail and roll back the new version's
+database row.
+
+Each review is matched to its patchwork patch by subject, not by
+position, so a patch that failed to apply does not shift the remaining
+reviews onto the wrong patches.
 
 Coverity static analysis
 ------------------------

@@ -1226,25 +1226,40 @@ async def review_patches(ctx):
         for rev in ctx.cser.db.review_get_for_version(ctx.svid):
             existing_reviews.add(rev.seq)
 
+    # Map each commit to its patchwork patch number by subject. The
+    # applied branch may hold fewer commits than the series has patches
+    # (e.g. one failed to apply), so a positional index would attach a
+    # review to the wrong patchwork patch
+    patches = ctx.series_data.get('patches', [])
+    seq_by_subject = {}
+    for i, patch in enumerate(patches):
+        subject = _clean_series_name(patch.get('name', ''))
+        seq_by_subject.setdefault(subject, i + 1)
+
+    total = ctx.patch_count or len(commits)
     reviewer_tag = ctx.reviewer_tag
     for i, cmt in enumerate(series.commits):
-        seq = i + 1
+        seq = seq_by_subject.get(cmt.subject)
+        if seq is None:
+            tout.warning(f"Commit '{cmt.subject}' matches no patchwork "
+                         'patch; attaching by position')
+            seq = i + 1
 
         if patch_sel and seq not in patch_sel:
             continue
 
         if seq in existing_reviews:
-            tout.notice(f'Skipping patch {seq}/{len(commits)}'
+            tout.notice(f'Skipping patch {seq}/{total}'
                         ' (already in database)')
             continue
 
         if (reviewer_tag in cmt.rtags.get('Reviewed-by', set()) or
                 reviewer_tag in cmt.rtags.get('Tested-by', set())):
-            tout.notice(f'Skipping patch {seq}/{len(commits)}'
+            tout.notice(f'Skipping patch {seq}/{total}'
                         ' (already reviewed)')
             continue
 
-        tout.notice(f'Reviewing patch {seq}/{len(commits)}...')
+        tout.notice(f'Reviewing patch {seq}/{total}...')
 
         body = await _review_single_patch(ctx, cmt, seq, all_commits)
         if body:

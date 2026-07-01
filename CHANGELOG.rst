@@ -44,6 +44,10 @@ Fixed
   patch is left unreviewed instead.
 - Comments on the commit message are now placed before comments on the
   code in a review, rather than in whatever order the agent emitted them.
+- Reviews attach to the correct patchwork patch by subject rather than by
+  position. When a patch fails to apply, leaving fewer commits on the
+  branch than the series has patches, the remaining reviews no longer
+  shift onto the wrong patches.
 
 Changed
 ~~~~~~~

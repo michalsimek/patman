@@ -5483,6 +5483,48 @@ VERDICT: skip"""
         self.assertIn('COVERITY', prompt)
         self.assertIn('drivers/foo.c:42', prompt)
 
+    def test_review_aligns_by_subject(self):
+        """Test reviews attach to the patchwork patch by subject, not order"""
+        from patman import review as review_mod
+        from patman.review import ReviewContext
+
+        ctx = ReviewContext(None, None, {'patches': [
+            {'name': '[v2,1/3] alpha'},
+            {'name': '[v2,2/3] beta'},
+            {'name': '[v2,3/3] gamma'}]})
+        ctx.branch_name = 'b'
+        ctx.upstream_branch = 'u'
+        ctx.main_repo = self.tmpdir
+        ctx.patch_count = 3
+        ctx.cover_content = None
+        ctx.svid = None
+        ctx.patch_selection = None
+        ctx.reviewer_name = 'Test'
+        ctx.reviewer_email = 't@t.com'
+
+        # The branch has only beta and gamma applied; alpha (1/3) failed to
+        # apply, so a positional mapping would misattribute the reviews
+        commits = [types.SimpleNamespace(subject='beta', hash='h2', rtags={}),
+                   types.SimpleNamespace(subject='gamma', hash='h3', rtags={})]
+        series = types.SimpleNamespace(commits=commits)
+
+        async def fake_single(ctx, cmt, seq, all_commits):
+            return f'review-{cmt.subject}'
+
+        loop = asyncio.new_event_loop()
+        with mock.patch.object(review_mod.claude_mod, 'check_available',
+                               return_value=True), \
+                mock.patch.object(review_mod.patchstream,
+                                  'get_metadata_for_list',
+                                  return_value=series), \
+                mock.patch.object(review_mod, '_review_single_patch',
+                                  side_effect=fake_single), \
+                terminal.capture():
+            bodies = loop.run_until_complete(review_mod.review_patches(ctx))
+        loop.close()
+        # beta is patchwork patch 2 and gamma is 3 -- not 1 and 2
+        self.assertEqual({2: 'review-beta', 3: 'review-gamma'}, bodies)
+
     def test_review_guess_name(self):
         """Test guessing first name from email address"""
         from patman.review import guess_name_from_email
