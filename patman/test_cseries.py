@@ -5525,6 +5525,70 @@ VERDICT: skip"""
         # beta is patchwork patch 2 and gamma is 3 -- not 1 and 2
         self.assertEqual({2: 'review-beta', 3: 'review-gamma'}, bodies)
 
+    def test_format_findings(self):
+        """Test findings are formatted for storage"""
+        from patman.review import _format_findings
+        self.assertEqual('Looks good; no issues found.',
+                         _format_findings('approved', []))
+        body = _format_findings('changes_needed', [('> code line', 'Do X.')])
+        self.assertIn('> code line', body)
+        self.assertIn('Do X.', body)
+
+    def test_series_review_stores(self):
+        """Test 'series review' stores the findings in the database"""
+        from patman import review as review_mod
+        cser = self.get_cser()
+        sid = cser.db.series_add('foo', 'foo')
+        cser.db.ser_ver_add(sid, 1)
+        cser.commit()
+        svid = cser.get_ser_ver(sid, 1).idnum
+
+        commits = [
+            types.SimpleNamespace(hash='h1', subject='alpha',
+                                  msg='alpha\n\nbody', rtags={}),
+            types.SimpleNamespace(hash='h2', subject='beta',
+                                  msg='beta\n\nbody', rtags={})]
+        series = types.SimpleNamespace(
+            commits=commits, cover=['Cover subject', 'cover body'])
+        cover = ('', 'changes_needed', [('', 'Add a Changes-in-v2 block.')])
+        results = [
+            ('', 'changes_needed',
+             [('> diff --git a/x b/x\n> @@ -1 +1 @@', 'Fix this.')], 'm'),
+            ('', 'approved', [], 'm')]
+
+        with mock.patch.object(review_mod.claude_mod, 'check_available',
+                               return_value=True), \
+                mock.patch.object(review_mod.gitutil, 'get_top_level',
+                                  return_value=self.tmpdir), \
+                mock.patch.object(review_mod, '_run_cover_review_sync',
+                                  return_value=cover), \
+                mock.patch.object(review_mod, '_run_patch_review_sync',
+                                  side_effect=results), \
+                terminal.capture():
+            review_mod.review_series(cser, sid, svid, 1, 'foo', series)
+
+        stored = {r.seq: r for r in cser.db.review_get_for_version(svid)}
+        self.assertEqual(3, len(stored))
+        self.assertIn('Changes-in-v2', stored[0].body)  # cover letter (seq 0)
+        self.assertIn('Fix this.', stored[1].body)
+        self.assertEqual(0, stored[1].approved)
+        self.assertIn('Looks good', stored[2].body)
+        self.assertEqual(1, stored[2].approved)
+
+    def test_series_review_already(self):
+        """Test 'series review' refuses to overwrite without --force"""
+        cser = self.get_cser()
+        sid = cser.db.series_add('foo', 'foo')
+        cser.db.ser_ver_add(sid, 1)
+        cser.commit()
+        svid = cser.get_ser_ver(sid, 1).idnum
+        cser.db.review_add(svid, 1, 'body', False, 't')
+        cser.commit()
+
+        with self.assertRaises(ValueError) as cm:
+            cser.review('foo', 1)
+        self.assertIn('already has', str(cm.exception))
+
     def test_review_guess_name(self):
         """Test guessing first name from email address"""
         from patman.review import guess_name_from_email

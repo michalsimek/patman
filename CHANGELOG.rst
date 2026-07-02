@@ -10,6 +10,11 @@ Unreleased
 
 Added
 ~~~~~
+- ``series review`` runs an AI review of your own series (added with
+  ``series add``) -- the patches and the cover letter -- and stores the
+  findings in the database, so you can check a series before sending it
+  and re-read the review later with ``series info -r`` without paying
+  for it again.
 - ``review --coverity`` runs Coverity on the base and the patched series
   and feeds the newly introduced defects into the review as context.
   ``--coverity-defconfig`` selects the board to build (default

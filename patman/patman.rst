@@ -1326,6 +1326,29 @@ If the reviewer email (from ``--reviewer`` or git config) differs from
 the ``--gmail-account``, patman sets the From header on the draft so
 the email is sent with the correct identity.
 
+Reviewing your own series before sending
+----------------------------------------
+
+To get an AI review of your own series before sending it, add the
+series with ``patman series add`` and then run::
+
+    patman series review
+
+This reviews the commits on the current branch (or ``-s <name>``) with
+the same agent, along with the cover letter (stored as patch 0), and
+saves the findings in the database, keyed by version. Because the
+review is expensive, it is saved so you can read it later without
+re-running::
+
+    patman series info -r          # show the stored review
+    patman series info -r 2 3      # just patches 2 and 3
+
+Re-running is refused when a review is already stored; pass ``-f`` to
+review again, replacing the stored one. Unlike ``patman review``, this
+needs no patchwork link and creates no drafts -- it is purely a local
+pre-send check. Reviews from the previous version are used as context,
+so a follow-up review focuses on what changed.
+
 Active series only
 ------------------
 

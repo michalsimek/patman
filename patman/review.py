@@ -1099,15 +1099,16 @@ def _write_comments_file(series_data, pwork):
     return comments_path
 
 
-async def _review_cover_letter(ctx, all_commits):
-    """Review the cover letter / series as a whole
+async def _run_cover_review(ctx, all_commits):
+    """Run the review agent on the cover letter and parse its output
 
     Args:
         ctx (ReviewContext): Review context (uses cover_content etc.)
         all_commits (list): (seq, hash, subject) tuples
 
     Returns:
-        str or None: Review body, or None if skipped
+        tuple or None: (greeting, verdict, comments), or None if the agent
+            failed or chose to skip
     """
     tout.notice('Reviewing series (cover letter)...')
     prompt = _build_cover_review_prompt(
@@ -1121,11 +1122,28 @@ async def _review_cover_letter(ctx, all_commits):
     greeting, verdict, comments = parse_review_output(log)
     if verdict == 'skip':
         return None
+    return greeting, verdict, comments
+
+
+async def _review_cover_letter(ctx, all_commits):
+    """Review the cover letter / series as a whole
+
+    Args:
+        ctx (ReviewContext): Review context (uses cover_content etc.)
+        all_commits (list): (seq, hash, subject) tuples
+
+    Returns:
+        str or None: Review body, or None if skipped
+    """
+    result = await _run_cover_review(ctx, all_commits)
+    if result is None:
+        return None
+    greeting, verdict, comments = result
     return format_review_email(ctx, greeting, verdict, comments)
 
 
-async def _review_single_patch(ctx, cmt, seq, all_commits):
-    """Review a single patch
+async def _run_patch_review(ctx, cmt, seq, all_commits):
+    """Run the review agent on one patch and parse its output
 
     Args:
         ctx (ReviewContext): Review context
@@ -1134,7 +1152,8 @@ async def _review_single_patch(ctx, cmt, seq, all_commits):
         all_commits (list): (seq, hash, subject) tuples
 
     Returns:
-        str or None: Review body text, or None if there is nothing to say
+        tuple or None: (greeting, verdict, comments, commit_msg), or None
+            if the agent failed
     """
     body = cmt.msg.strip()
     if body.startswith(cmt.subject):
@@ -1151,8 +1170,27 @@ async def _review_single_patch(ctx, cmt, seq, all_commits):
         cwd=ctx.repo_path, max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
     success, log = await claude_mod.run_agent_collect(prompt, options)
     if not success or not log.strip():
-        return '(Review failed — please review manually)'
+        return None
     greeting, verdict, comments = parse_review_output(log)
+    return greeting, verdict, comments, commit_msg
+
+
+async def _review_single_patch(ctx, cmt, seq, all_commits):
+    """Review a single patch
+
+    Args:
+        ctx (ReviewContext): Review context
+        cmt: Commit object with hash, subject, msg, rtags
+        seq (int): Patch sequence number (1-based)
+        all_commits (list): (seq, hash, subject) tuples
+
+    Returns:
+        str or None: Review body text, or None if there is nothing to say
+    """
+    result = await _run_patch_review(ctx, cmt, seq, all_commits)
+    if result is None:
+        return '(Review failed — please review manually)'
+    greeting, verdict, comments, commit_msg = result
     # A non-approval with no comments has nothing to say (just a greeting
     # and the quoted commit message); drop it rather than sending an empty
     # review
@@ -1278,6 +1316,157 @@ def review_patches_sync(ctx):
     """
     loop = asyncio.get_event_loop()
     return loop.run_until_complete(review_patches(ctx))
+
+
+def _run_patch_review_sync(ctx, cmt, seq, all_commits):
+    """Synchronous wrapper for _run_patch_review()"""
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(
+        _run_patch_review(ctx, cmt, seq, all_commits))
+
+
+def _run_cover_review_sync(ctx, all_commits):
+    """Synchronous wrapper for _run_cover_review()"""
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(_run_cover_review(ctx, all_commits))
+
+
+def _format_findings(verdict, comments):
+    """Format review findings for one patch as a stored body
+
+    Args:
+        verdict (str): 'approved', 'changes_needed' or 'skip'
+        comments (list): (hunk, comment) tuples, already ordered
+
+    Returns:
+        str: Body text to store
+    """
+    if not comments:
+        return ('Looks good; no issues found.' if verdict == 'approved'
+                else 'No specific comments.')
+    lines = []
+    for hunk, comment in comments:
+        if hunk:
+            lines.append(hunk)
+            lines.append('')
+        lines.append(comment)
+        lines.append('')
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _print_finding(seq, total, subject, verdict, comments):
+    """Print the findings for one patch to the terminal
+
+    Args:
+        seq (int): Patch sequence number
+        total (int): Total number of patches
+        subject (str): Patch subject
+        verdict (str): 'approved', 'changes_needed' or 'skip'
+        comments (list): (hunk, comment) tuples
+    """
+    if comments:
+        label = 'changes suggested'
+    elif verdict == 'approved':
+        label = 'looks good'
+    else:
+        label = 'no comments'
+    tout.notice('')
+    if seq == 0:
+        tout.notice(f'=== Cover letter — {label} ===')
+    else:
+        tout.notice(f'=== Patch {seq}/{total}: {subject} — {label} ===')
+    for hunk, comment in comments:
+        for line in hunk.splitlines():
+            tout.notice(f'  {line}')
+        if hunk:
+            tout.notice('')
+        for line in comment.splitlines():
+            tout.notice(f'  {line}')
+        tout.notice('')
+
+
+def review_series(cser, series_id, svid, version, branch, series,
+                  spelling='British', context=None):
+    """AI-review a local series' commits and store the reviews
+
+    Reviews each commit on the branch in place (no worktree, since the
+    branch is already checked out) and stores the findings in the
+    database, keyed by the ser_ver id, so they can be viewed later with
+    'patman series info -r'. Reviews from the previous version, if any,
+    are provided as context.
+
+    Args:
+        cser (Cseries): Open cseries instance
+        series_id (int): Series ID
+        svid (int): ser_ver id to attach the reviews to
+        version (int): Series version number
+        branch (str): Branch holding the series
+        series (Series): Series object with a .commits list
+        spelling (str): Spelling convention for comments
+        context (str or None): Extra context for the review agent
+    """
+    if not claude_mod.check_available():
+        raise ValueError(
+            "The review agent is not available; install the 'review' extra "
+            '(pip install patch-manager[review])')
+
+    commits = series.commits
+    if not commits:
+        tout.notice('No commits to review')
+        return
+
+    repo = gitutil.get_top_level()
+    ctx = ReviewContext(None, cser, {})
+    ctx.main_repo = repo
+    ctx.repo_path = repo
+    ctx.branch_name = branch
+    ctx.upstream_branch = f'{branch}~{len(commits)}'
+    ctx.patch_count = len(commits)
+    ctx.series_id = series_id
+    ctx.svid = svid
+    ctx.version = version
+    ctx.spelling = spelling
+    ctx.context = _read_context(context) if context else None
+    if series.cover:
+        ctx.cover_content = '\n'.join(series.cover)
+    for rev in cser.db.review_get_previous(series_id, version):
+        ctx.previous_reviews[rev.seq] = rev.body
+
+    all_commits = [(i + 1, cmt.hash, cmt.subject)
+                   for i, cmt in enumerate(commits)]
+    timestamp = datetime.now().isoformat()
+    total = len(commits)
+    n_comments = 0
+
+    if ctx.cover_content and total > 1:
+        result = _run_cover_review_sync(ctx, all_commits)
+        if result is not None:
+            _, verdict, comments = result
+            comments = sorted(comments, key=lambda hc: _is_code_comment(hc[0]))
+            body = cleanup_review_text(_format_findings(verdict, comments))
+            cser.db.review_add(svid, 0, body, verdict == 'approved',
+                               timestamp)
+            n_comments += len(comments)
+            _print_finding(0, total, 'cover letter', verdict, comments)
+
+    for i, cmt in enumerate(commits):
+        seq = i + 1
+        tout.notice(f'Reviewing patch {seq}/{total}...')
+        result = _run_patch_review_sync(ctx, cmt, seq, all_commits)
+        if result is None:
+            tout.warning(f'  Review failed for patch {seq}')
+            continue
+        _, verdict, comments, _ = result
+        comments = sorted(comments, key=lambda hc: _is_code_comment(hc[0]))
+        body = cleanup_review_text(_format_findings(verdict, comments))
+        cser.db.review_add(svid, seq, body, verdict == 'approved', timestamp)
+        n_comments += len(comments)
+        _print_finding(seq, total, cmt.subject, verdict, comments)
+    cser.commit()
+
+    tout.notice('')
+    tout.notice(f"Stored review of '{branch}' v{version}: {total} patch(es), "
+                f"{n_comments} comment(s). View with 'patman series info -r'")
 
 
 def apply_series_sync(pwork, link, branch_name, upstream_branch, repo_path):

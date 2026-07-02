@@ -342,6 +342,16 @@ def add_series_subparser(subparsers):
     ren = series_subparsers.add_parser('rename')
     ren.add_argument('-N', '--new-name', help='New name for the series')
 
+    rev = series_subparsers.add_parser(
+        'review', help='AI-review the series and store the result')
+    rev.add_argument('-f', '--force', action='store_true',
+                     help='Re-review even if reviews are already stored')
+    rev.add_argument('--spelling', type=str, default='British',
+                     help='Spelling convention for review comments')
+    rev.add_argument('-c', '--context', type=str, default=None,
+                     help="Extra context for the review agent, or '@path' "
+                          'to read it from a file')
+
     series_subparsers.add_parser('rm')
 
     snotes = series_subparsers.add_parser('save-notes')

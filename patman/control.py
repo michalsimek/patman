@@ -245,6 +245,9 @@ def do_series(args, test_db=None, pwork=None, cser=None):
             cser.show_notes(args.series)
         elif args.subcmd == 'rename':
             cser.rename(args.series, args.new_name, dry_run=args.dry_run)
+        elif args.subcmd == 'review':
+            cser.review(args.series, args.version, force=args.force,
+                        spelling=args.spelling, context=args.context)
         elif args.subcmd == 'set-upstream':
             cser.set_upstream(args.series, args.upstream_name,
                               dry_run=args.dry_run)
