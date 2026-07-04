@@ -1507,6 +1507,49 @@ class Cseries(cser_helper.CseriesHelper):
                 self.rollback()
                 tout.info('Dry run completed')
 
+    def review(self, series, version, force=False, spelling='British',
+               context=None):
+        """AI-review the series and store the result in the database
+
+        Reviews the commits on the series branch with the review agent and
+        stores the findings, keyed by version, so they can be viewed later
+        with 'patman series info -r'. The series must already have been
+        added with 'patman series add'.
+
+        Args:
+            series (str): Name of series, or None to use the current branch
+            version (int): Version number, or None to detect from the branch
+            force (bool): Re-review even if reviews are already stored
+            spelling (str): Spelling convention for review comments
+            context (str or None): Extra context for the review agent, or
+                '@path' to read it from a file
+        """
+        from patman import review
+
+        ser, version = self._parse_series_and_version(series, version)
+        self._ensure_in_db(ser)
+        self._ensure_version(ser, version)
+        svid = self.get_ser_ver(ser.idnum, version).idnum
+
+        existing = self.db.review_get_for_version(svid)
+        if existing and not force:
+            raise ValueError(
+                f"Series '{ser.name}' v{version} already has "
+                f"{len(existing)} stored review(s); view with 'patman "
+                "series info -r' or use -f to re-review")
+        if existing:
+            self.db.review_delete_for_version(svid)
+
+        name = self._get_branch_name(ser.name, version)
+        if not gitutil.check_branch(name, git_dir=self.gitdir):
+            raise ValueError(f"No branch named '{name}'")
+        count = gitutil.count_commits_to_branch(name, self.gitdir)
+        series_obj = patchstream.get_metadata(name, 0, count,
+                                              git_dir=self.gitdir)
+
+        review.review_series(self, ser.idnum, svid, version, name,
+                             series_obj, spelling=spelling, context=context)
+
     def gather_all(self, pwork, show_comments, show_cover_comments,
                    sync_all_versions, gather_tags, dry_run=False):
         to_fetch, missing = self._get_fetch_dict(sync_all_versions)

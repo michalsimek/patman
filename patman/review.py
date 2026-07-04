@@ -15,9 +15,14 @@ Gmail draft replies.
 
 import asyncio
 from collections import namedtuple
+from concurrent import futures
 from datetime import datetime
+import fcntl
 import os
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
 
 import aiohttp
@@ -28,6 +33,7 @@ from u_boot_pylib import terminal
 from u_boot_pylib import tools
 from u_boot_pylib import tout
 
+from patman import coverity
 from patman import cser_helper
 from patman import database
 from patman import gmail
@@ -89,6 +95,7 @@ class ReviewContext:  # pylint: disable=R0902
         self.previous_reviews = {}
         self.diffstat = None
         self.context = None
+        self.coverity_text = None
 
     @property
     def reviewer_tag(self):
@@ -351,6 +358,16 @@ USER CONTEXT (extra notes from the reviewer for this run):
 {ctx.context}
 '''
 
+    coverity_section = ''
+    if getattr(ctx, 'coverity_text', None):
+        coverity_section = f'''
+COVERITY (new static-analysis defects introduced by this series):
+{ctx.coverity_text}
+
+If any of these defects fall in the code this patch changes, raise them
+in your review. Ignore defects unrelated to this patch.
+'''
+
     return f'''You are an experienced U-Boot developer reviewing \
 a patch submitted to
 the U-Boot mailing list. This is patch {seq}/{len(all_commits)} in the series.
@@ -388,7 +405,7 @@ IMPORTANT:
    - Commit message quality: Is it clear, using present/imperative
      tense? Does it explain the motivation?
    - API usage: Are U-Boot APIs used correctly?
-{cover_section}{prev_section}{context_section}
+{cover_section}{prev_section}{context_section}{coverity_section}
 OUTPUT FORMAT:
 Your response MUST use this exact structured format, with no other text
 before or after. Start with a GREETING line containing the patch
@@ -436,6 +453,9 @@ Rules:
     > +#include <foo.h>
 
     This include is unnecessary.
+- To comment on the commit message itself (not the code), quote the
+  relevant commit-message line(s) with '> ' and no diff header. Such
+  comments are placed before the code comments in the email
 - Quote enough context from the diff to identify the location
 - CRITICAL: Every quoted line MUST be copied EXACTLY from the output
   of 'git show {commit_hash}'. Do NOT reconstruct, paraphrase, or
@@ -735,6 +755,26 @@ def _format_approved(ctx, commit_message=None, diffstat=None):
     return '\n'.join(lines)
 
 
+def _is_code_comment(hunk):
+    """Return True if a comment's quoted hunk refers to the code diff
+
+    Code comments quote the diff and so include a 'diff --git' or '@@'
+    header line; comments on the commit message quote prose without one.
+
+    Args:
+        hunk (str): Quoted lines for the comment (each prefixed with '> ')
+
+    Returns:
+        bool: True for a comment on the code, False for one on the commit
+            message (or a general comment with no quoted code)
+    """
+    for line in hunk.splitlines():
+        stripped = line.lstrip('> ').rstrip()
+        if stripped.startswith('diff --git ') or stripped.startswith('@@ '):
+            return True
+    return False
+
+
 def _format_with_comments(ctx, greeting, verdict, comments,
                           commit_message=None):
     """Format a review that has comments
@@ -771,7 +811,10 @@ def _format_with_comments(ctx, greeting, verdict, comments,
                 lines.append(f'> {dl}')
     lines.append('')
 
-    for hunk, comment in comments:
+    # Comments on the commit message come before comments on the code.
+    # sorted() is stable, so the relative order within each group is kept
+    ordered = sorted(comments, key=lambda hc: _is_code_comment(hc[0]))
+    for hunk, comment in ordered:
         if hunk:
             lines.append(hunk)
             lines.append('')
@@ -1056,15 +1099,16 @@ def _write_comments_file(series_data, pwork):
     return comments_path
 
 
-async def _review_cover_letter(ctx, all_commits):
-    """Review the cover letter / series as a whole
+async def _run_cover_review(ctx, all_commits):
+    """Run the review agent on the cover letter and parse its output
 
     Args:
         ctx (ReviewContext): Review context (uses cover_content etc.)
         all_commits (list): (seq, hash, subject) tuples
 
     Returns:
-        str or None: Review body, or None if skipped
+        tuple or None: (greeting, verdict, comments), or None if the agent
+            failed or chose to skip
     """
     tout.notice('Reviewing series (cover letter)...')
     prompt = _build_cover_review_prompt(
@@ -1078,11 +1122,28 @@ async def _review_cover_letter(ctx, all_commits):
     greeting, verdict, comments = parse_review_output(log)
     if verdict == 'skip':
         return None
+    return greeting, verdict, comments
+
+
+async def _review_cover_letter(ctx, all_commits):
+    """Review the cover letter / series as a whole
+
+    Args:
+        ctx (ReviewContext): Review context (uses cover_content etc.)
+        all_commits (list): (seq, hash, subject) tuples
+
+    Returns:
+        str or None: Review body, or None if skipped
+    """
+    result = await _run_cover_review(ctx, all_commits)
+    if result is None:
+        return None
+    greeting, verdict, comments = result
     return format_review_email(ctx, greeting, verdict, comments)
 
 
-async def _review_single_patch(ctx, cmt, seq, all_commits):
-    """Review a single patch
+async def _run_patch_review(ctx, cmt, seq, all_commits):
+    """Run the review agent on one patch and parse its output
 
     Args:
         ctx (ReviewContext): Review context
@@ -1091,7 +1152,8 @@ async def _review_single_patch(ctx, cmt, seq, all_commits):
         all_commits (list): (seq, hash, subject) tuples
 
     Returns:
-        str: Review body text
+        tuple or None: (greeting, verdict, comments, commit_msg), or None
+            if the agent failed
     """
     body = cmt.msg.strip()
     if body.startswith(cmt.subject):
@@ -1108,8 +1170,32 @@ async def _review_single_patch(ctx, cmt, seq, all_commits):
         cwd=ctx.repo_path, max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
     success, log = await claude_mod.run_agent_collect(prompt, options)
     if not success or not log.strip():
-        return '(Review failed — please review manually)'
+        return None
     greeting, verdict, comments = parse_review_output(log)
+    return greeting, verdict, comments, commit_msg
+
+
+async def _review_single_patch(ctx, cmt, seq, all_commits):
+    """Review a single patch
+
+    Args:
+        ctx (ReviewContext): Review context
+        cmt: Commit object with hash, subject, msg, rtags
+        seq (int): Patch sequence number (1-based)
+        all_commits (list): (seq, hash, subject) tuples
+
+    Returns:
+        str or None: Review body text, or None if there is nothing to say
+    """
+    result = await _run_patch_review(ctx, cmt, seq, all_commits)
+    if result is None:
+        return '(Review failed — please review manually)'
+    greeting, verdict, comments, commit_msg = result
+    # A non-approval with no comments has nothing to say (just a greeting
+    # and the quoted commit message); drop it rather than sending an empty
+    # review
+    if verdict != 'approved' and not comments:
+        return None
     return format_review_email(ctx, greeting, verdict, comments, commit_msg)
 
 
@@ -1178,28 +1264,46 @@ async def review_patches(ctx):
         for rev in ctx.cser.db.review_get_for_version(ctx.svid):
             existing_reviews.add(rev.seq)
 
+    # Map each commit to its patchwork patch number by subject. The
+    # applied branch may hold fewer commits than the series has patches
+    # (e.g. one failed to apply), so a positional index would attach a
+    # review to the wrong patchwork patch
+    patches = ctx.series_data.get('patches', [])
+    seq_by_subject = {}
+    for i, patch in enumerate(patches):
+        subject = _clean_series_name(patch.get('name', ''))
+        seq_by_subject.setdefault(subject, i + 1)
+
+    total = ctx.patch_count or len(commits)
     reviewer_tag = ctx.reviewer_tag
     for i, cmt in enumerate(series.commits):
-        seq = i + 1
+        seq = seq_by_subject.get(cmt.subject)
+        if seq is None:
+            tout.warning(f"Commit '{cmt.subject}' matches no patchwork "
+                         'patch; attaching by position')
+            seq = i + 1
 
         if patch_sel and seq not in patch_sel:
             continue
 
         if seq in existing_reviews:
-            tout.notice(f'Skipping patch {seq}/{len(commits)}'
+            tout.notice(f'Skipping patch {seq}/{total}'
                         ' (already in database)')
             continue
 
         if (reviewer_tag in cmt.rtags.get('Reviewed-by', set()) or
                 reviewer_tag in cmt.rtags.get('Tested-by', set())):
-            tout.notice(f'Skipping patch {seq}/{len(commits)}'
+            tout.notice(f'Skipping patch {seq}/{total}'
                         ' (already reviewed)')
             continue
 
-        tout.notice(f'Reviewing patch {seq}/{len(commits)}...')
+        tout.notice(f'Reviewing patch {seq}/{total}...')
 
-        review_bodies[seq] = await _review_single_patch(ctx, cmt, seq,
-                                                          all_commits)
+        body = await _review_single_patch(ctx, cmt, seq, all_commits)
+        if body:
+            review_bodies[seq] = body
+        else:
+            tout.notice(f'  Nothing to say on patch {seq}; skipping')
 
     return review_bodies
 
@@ -1212,6 +1316,157 @@ def review_patches_sync(ctx):
     """
     loop = asyncio.get_event_loop()
     return loop.run_until_complete(review_patches(ctx))
+
+
+def _run_patch_review_sync(ctx, cmt, seq, all_commits):
+    """Synchronous wrapper for _run_patch_review()"""
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(
+        _run_patch_review(ctx, cmt, seq, all_commits))
+
+
+def _run_cover_review_sync(ctx, all_commits):
+    """Synchronous wrapper for _run_cover_review()"""
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(_run_cover_review(ctx, all_commits))
+
+
+def _format_findings(verdict, comments):
+    """Format review findings for one patch as a stored body
+
+    Args:
+        verdict (str): 'approved', 'changes_needed' or 'skip'
+        comments (list): (hunk, comment) tuples, already ordered
+
+    Returns:
+        str: Body text to store
+    """
+    if not comments:
+        return ('Looks good; no issues found.' if verdict == 'approved'
+                else 'No specific comments.')
+    lines = []
+    for hunk, comment in comments:
+        if hunk:
+            lines.append(hunk)
+            lines.append('')
+        lines.append(comment)
+        lines.append('')
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def _print_finding(seq, total, subject, verdict, comments):
+    """Print the findings for one patch to the terminal
+
+    Args:
+        seq (int): Patch sequence number
+        total (int): Total number of patches
+        subject (str): Patch subject
+        verdict (str): 'approved', 'changes_needed' or 'skip'
+        comments (list): (hunk, comment) tuples
+    """
+    if comments:
+        label = 'changes suggested'
+    elif verdict == 'approved':
+        label = 'looks good'
+    else:
+        label = 'no comments'
+    tout.notice('')
+    if seq == 0:
+        tout.notice(f'=== Cover letter — {label} ===')
+    else:
+        tout.notice(f'=== Patch {seq}/{total}: {subject} — {label} ===')
+    for hunk, comment in comments:
+        for line in hunk.splitlines():
+            tout.notice(f'  {line}')
+        if hunk:
+            tout.notice('')
+        for line in comment.splitlines():
+            tout.notice(f'  {line}')
+        tout.notice('')
+
+
+def review_series(cser, series_id, svid, version, branch, series,
+                  spelling='British', context=None):
+    """AI-review a local series' commits and store the reviews
+
+    Reviews each commit on the branch in place (no worktree, since the
+    branch is already checked out) and stores the findings in the
+    database, keyed by the ser_ver id, so they can be viewed later with
+    'patman series info -r'. Reviews from the previous version, if any,
+    are provided as context.
+
+    Args:
+        cser (Cseries): Open cseries instance
+        series_id (int): Series ID
+        svid (int): ser_ver id to attach the reviews to
+        version (int): Series version number
+        branch (str): Branch holding the series
+        series (Series): Series object with a .commits list
+        spelling (str): Spelling convention for comments
+        context (str or None): Extra context for the review agent
+    """
+    if not claude_mod.check_available():
+        raise ValueError(
+            "The review agent is not available; install the 'review' extra "
+            '(pip install patch-manager[review])')
+
+    commits = series.commits
+    if not commits:
+        tout.notice('No commits to review')
+        return
+
+    repo = gitutil.get_top_level()
+    ctx = ReviewContext(None, cser, {})
+    ctx.main_repo = repo
+    ctx.repo_path = repo
+    ctx.branch_name = branch
+    ctx.upstream_branch = f'{branch}~{len(commits)}'
+    ctx.patch_count = len(commits)
+    ctx.series_id = series_id
+    ctx.svid = svid
+    ctx.version = version
+    ctx.spelling = spelling
+    ctx.context = _read_context(context) if context else None
+    if series.cover:
+        ctx.cover_content = '\n'.join(series.cover)
+    for rev in cser.db.review_get_previous(series_id, version):
+        ctx.previous_reviews[rev.seq] = rev.body
+
+    all_commits = [(i + 1, cmt.hash, cmt.subject)
+                   for i, cmt in enumerate(commits)]
+    timestamp = datetime.now().isoformat()
+    total = len(commits)
+    n_comments = 0
+
+    if ctx.cover_content and total > 1:
+        result = _run_cover_review_sync(ctx, all_commits)
+        if result is not None:
+            _, verdict, comments = result
+            comments = sorted(comments, key=lambda hc: _is_code_comment(hc[0]))
+            body = cleanup_review_text(_format_findings(verdict, comments))
+            cser.db.review_add(svid, 0, body, verdict == 'approved',
+                               timestamp)
+            n_comments += len(comments)
+            _print_finding(0, total, 'cover letter', verdict, comments)
+
+    for i, cmt in enumerate(commits):
+        seq = i + 1
+        tout.notice(f'Reviewing patch {seq}/{total}...')
+        result = _run_patch_review_sync(ctx, cmt, seq, all_commits)
+        if result is None:
+            tout.warning(f'  Review failed for patch {seq}')
+            continue
+        _, verdict, comments, _ = result
+        comments = sorted(comments, key=lambda hc: _is_code_comment(hc[0]))
+        body = cleanup_review_text(_format_findings(verdict, comments))
+        cser.db.review_add(svid, seq, body, verdict == 'approved', timestamp)
+        n_comments += len(comments)
+        _print_finding(seq, total, cmt.subject, verdict, comments)
+    cser.commit()
+
+    tout.notice('')
+    tout.notice(f"Stored review of '{branch}' v{version}: {total} patch(es), "
+                f"{n_comments} comment(s). View with 'patman series info -r'")
 
 
 def apply_series_sync(pwork, link, branch_name, upstream_branch, repo_path):
@@ -1695,9 +1950,11 @@ def _register_series(cser, clean_name, version, link, series_data,
         series_id = cser.db.series_find_by_name(
             branch_name, include_archived=True)
         if not series_id:
-            desc = series_data.get('cover_letter', {})
-            desc = desc.get('name', '') if desc else clean_name
-            series_id = cser.db.series_add(branch_name, desc, ups=upstream)
+            # Store the cleaned title (stable across versions) as the desc,
+            # not the raw '[vN,0/M] ...' cover-letter subject, so later
+            # versions link to this series via series_find_review_by_name()
+            series_id = cser.db.series_add(branch_name, clean_name,
+                                           ups=upstream)
         cser.db.series_set_source(series_id, 'review')
 
     svid = cser.db.ser_ver_add(series_id, version, link=str(link))
@@ -1764,10 +2021,35 @@ def _fetch_series(pwork, link):
     return series_data, clean_name, version, patch_count
 
 
+def _delete_gmail_drafts(args, reviews):
+    """Delete the Gmail drafts recorded for the given reviews
+
+    Used when reviews are being replaced -- a forced re-review or a
+    redraft -- so the previous drafts do not linger in Gmail as
+    duplicates alongside the new ones. Reviews with no recorded draft
+    are ignored, and nothing happens if Gmail is unavailable.
+
+    Args:
+        args (Namespace): Command-line arguments (for gmail_account)
+        reviews (list of Review): Reviews whose recorded drafts to delete
+    """
+    draft_ids = [rev.draft_id for rev in reviews if rev.draft_id]
+    if not draft_ids:
+        return
+    if not gmail.check_available():
+        return
+    service = gmail.get_service(getattr(args, 'gmail_account', None))
+    for draft_id in draft_ids:
+        gmail.delete_draft(service, draft_id)
+    tout.notice(f'Deleted {len(draft_ids)} old Gmail draft(s)')
+
+
 def _draft_stored_reviews(args, reviews, series_data, pwork, cser):
     """Create Gmail drafts from stored review records
 
-    Only drafts reviews that do not already have a draft_id.
+    Drafts reviews that do not already have a draft_id. With --redraft it
+    drafts every stored review, recreating drafts that already exist so a
+    failed or lost draft can be regenerated from the database.
 
     Args:
         args (Namespace): Command-line arguments
@@ -1776,11 +2058,18 @@ def _draft_stored_reviews(args, reviews, series_data, pwork, cser):
         pwork (Patchwork): Patchwork instance
         cser (Cseries): Cseries instance
     """
-    need_draft = [rev for rev in reviews
-                  if not rev.draft_id]
+    if args.redraft:
+        need_draft = list(reviews)
+    else:
+        need_draft = [rev for rev in reviews
+                      if not rev.draft_id]
     if not need_draft:
         tout.notice('All reviews already have Gmail drafts')
         return
+    if args.redraft:
+        # Remove the drafts we are about to recreate so they do not linger
+        # as duplicates in the same Gmail thread
+        _delete_gmail_drafts(args, need_draft)
     review_bodies = {rev.seq: rev.body for rev in need_draft}
     review_ids = {rev.seq: rev.idnum
                   for rev in need_draft}
@@ -1893,6 +2182,57 @@ def _fetch_cover_content(pwork, series_data):
     return loop.run_until_complete(_fetch())
 
 
+def _run_coverity(ctx, args):
+    """Analyse the series with Coverity and summarise the new defects
+
+    Builds and analyses the base branch and the patched branch, then
+    returns a bullet-list summary of the defects the series introduces,
+    for use as review context.
+
+    Args:
+        ctx (ReviewContext): Review context (uses main_repo, repo_path,
+            upstream_branch)
+        args (Namespace): Command-line arguments (coverity_defconfig)
+
+    Returns:
+        str or None: Summary of new defects, or None if Coverity is
+            unavailable or finds nothing new
+    """
+    if not coverity.check_available():
+        tout.warning('Coverity tools (cov-build/cov-analyze) not found on '
+                     'PATH; skipping --coverity')
+        return None
+
+    defconfig = getattr(args, 'coverity_defconfig', None) or \
+        coverity.DEFAULT_DEFCONFIG
+    tout.notice(f'Running Coverity ({defconfig}) on the base and the '
+                'series; this builds twice and may take a while...')
+    with tempfile.TemporaryDirectory() as tmp:
+        base_wt = os.path.join(tmp, 'base')
+        # Check out the base detached in its own worktree so the build
+        # does not disturb the review worktree
+        subprocess.run(
+            ['git', '-C', ctx.main_repo, 'worktree', 'add', '--detach',
+             base_wt, ctx.upstream_branch],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True)
+        try:
+            base = coverity.analyze(base_wt, defconfig,
+                                    os.path.join(tmp, 'cov-base'))
+            patched = coverity.analyze(ctx.repo_path, defconfig,
+                                       os.path.join(tmp, 'cov-patched'))
+        finally:
+            gitutil.remove_worktree(ctx.main_repo, base_wt)
+
+    new = coverity.find_new_defects(base, patched)
+    if not new:
+        tout.notice('Coverity: no new defects introduced by the series')
+        return None
+    tout.notice(f'Coverity: {len(new)} new defect(s) introduced by the '
+                'series')
+    return coverity.format_defects(new)
+
+
 def _run_and_store_reviews(ctx, args):
     """Run AI review, refine, store and display results
 
@@ -1981,22 +2321,431 @@ def _find_or_register(ctx, args, clean_name, link):
         _, db_name, db_version, _ = existing
         tout.notice(f"Already reviewed: '{db_name}' v{db_version}")
         _show_reviews(reviews, ctx.series_data)
-        if args.create_drafts:
+        if args.create_drafts or args.redraft:
             _draft_stored_reviews(args, reviews, ctx.series_data, ctx.pwork,
                                   ctx.cser)
         return None
 
+    if args.create_drafts:
+        # The old drafts would otherwise be orphaned in Gmail when the
+        # review records that track them are deleted below
+        _delete_gmail_drafts(args, reviews)
     ctx.cser.db.review_delete_for_version(svid)
     ctx.cser.commit()
     tout.notice('Re-reviewing (forced)')
     return series_id, svid
 
 
+# Patchwork patch states worth reviewing: a series is reviewed only when at
+# least one of its patches is in one of these states
+ACTIVE_STATES = {'new', 'rfc', 'under-review', 'changes-requested',
+                 'needs-review-ack'}
+
+
+class ReviewInProgressError(Exception):
+    """Raised when another review of the same series is already running"""
+
+
+def _get_patch_states(pwork, link):
+    """Get the patchwork state of each patch in a series
+
+    Args:
+        pwork (Patchwork): Configured patchwork instance
+        link (str): Patchwork series link/ID
+
+    Returns:
+        list of str: State slug for each patch
+    """
+    async def _fetch():
+        async with aiohttp.ClientSession() as client:
+            return await pwork.get_series_patch_states(client, link)
+
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(_fetch())
+
+
+def _acquire_review_lock(repo, branch_name):
+    """Take an exclusive lock for a series review
+
+    The lock is a file locked with flock(), so the kernel releases it
+    automatically when patman exits or crashes, leaving no stale locks.
+    It stops two reviews of the same series running at once, whether from
+    --scan, parallel workers or a separate patman invocation.
+
+    Args:
+        repo (str): Top-level dir of the main checkout
+        branch_name (str): Review branch name, identifying the series
+
+    Returns:
+        int: Open file descriptor holding the lock; pass it to
+            _release_review_lock() when done
+
+    Raises:
+        ReviewInProgressError: if the lock is already held
+    """
+    path = os.path.join(repo, '.git', 'patman', 'locks',
+                        f'{branch_name}.lock')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        os.close(fd)
+        raise ReviewInProgressError(branch_name) from exc
+    return fd
+
+
+def _release_review_lock(fd):
+    """Release a review lock taken with _acquire_review_lock()
+
+    Args:
+        fd (int): File descriptor returned by _acquire_review_lock()
+    """
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+
+def _review_link(args, pwork, cser, link):
+    """Run the main review flow for a single patchwork series
+
+    Fetches the series, registers it (detecting an already-reviewed series
+    or a new version), applies the patches in a worktree and reviews them.
+    The series is locked for the duration so a concurrent review of the
+    same series is refused rather than corrupting its worktree or records.
+
+    Args:
+        args (Namespace): Command-line arguments
+        pwork (Patchwork): Configured patchwork instance
+        cser (Cseries): Open cseries instance
+        link (str): Patchwork series link/ID
+
+    Returns:
+        int: 0 on success, 1 if applying the patches failed
+
+    Raises:
+        ValueError: if the series is incomplete (not all patches present)
+    """
+    ups = pwork.upstream if pwork else None
+    branch_name = _make_review_name(link, ups)
+    main_repo = gitutil.get_top_level()
+    try:
+        lock_fd = _acquire_review_lock(main_repo, branch_name)
+    except ReviewInProgressError:
+        tout.warning(
+            f"A review of '{branch_name}' is already in progress; skipping")
+        return 0
+
+    try:
+        series_data, clean_name, version, patch_count = \
+            _fetch_series(pwork, link)
+
+        if not getattr(args, 'any_state', False):
+            states = _get_patch_states(pwork, link)
+            if not any(state in ACTIVE_STATES for state in states):
+                shown = ', '.join(sorted({s for s in states if s})) or 'none'
+                raise ValueError(
+                    f"Series '{clean_name}' is not active on patchwork "
+                    f'(patch states: {shown}); use --any-state to review it '
+                    'anyway')
+
+        ctx = ReviewContext(pwork, cser, series_data)
+        ctx.version = version
+        ctx.patch_count = patch_count
+
+        result = _find_or_register(ctx, args, clean_name, link)
+        if result is None:
+            return 0
+        ctx.series_id, ctx.svid = result
+
+        ctx.upstream_branch = _get_upstream_branch(args, cser)
+        ctx.main_repo = main_repo
+        ctx.branch_name = branch_name
+        wt_path = cser_helper.review_worktree_path(ctx.main_repo,
+                                                   ctx.branch_name)
+        tout.notice(f'Using review worktree {wt_path}')
+        ctx.repo_path = gitutil.ensure_worktree(
+            ctx.main_repo, wt_path, ctx.branch_name, ctx.upstream_branch)
+
+        if not _apply_and_check(ctx, link):
+            return 1
+
+        if args.apply_only:
+            tout.notice('Apply-only mode; skipping review')
+            return 0
+
+        ctx.patch_selection = parse_patch_selection(args.patches)
+        ctx.reviewer_name, ctx.reviewer_email = _parse_reviewer(args)
+        ctx.signoff = args.signoff or None
+        if ctx.signoff:
+            ctx.signoff = ctx.signoff.replace('\\n', '\n')
+        ctx.spelling = args.spelling
+        ctx.context = _read_context(args.context) if args.context else None
+        ctx.comments_path = _write_comments_file(series_data, pwork)
+
+        if getattr(args, 'coverity', False):
+            ctx.coverity_text = _run_coverity(ctx, args)
+
+        _run_and_store_reviews(ctx, args)
+        workflow.reviewed(cser, ctx.series_id, ctx.svid)
+        gitutil.remove_worktree(ctx.main_repo, wt_path)
+
+        return 0
+    finally:
+        _release_review_lock(lock_fd)
+
+
+NewVersion = namedtuple('NewVersion', 'desc,version,link,complete,active')
+
+ScanResult = namedtuple('ScanResult', 'desc,version,link,returncode,output')
+
+
+def _scan_new_versions(pwork, cser):
+    """Find newer patchwork versions of already-reviewed series
+
+    For each reviewed series, search patchwork by its cover-letter title
+    for the highest version present that is newer than the latest reviewed
+    one. The highest version is reported even when it is still incomplete,
+    along with whether it has fully appeared, so the caller can wait for it
+    rather than reviewing an older, now-superseded version.
+
+    Args:
+        pwork (Patchwork): Configured patchwork instance
+        cser (Cseries): Open cseries instance
+
+    Returns:
+        list of NewVersion: one entry per series that has a newer version
+    """
+    series = cser.db.series_get_dict(reviews_only=True)
+    found = []
+
+    async def _scan():
+        async with aiohttp.ClientSession() as client:
+            for ser in series.values():
+                max_ver = cser.db.series_get_max_version(ser.idnum)
+                matches = await pwork.query_series(client, ser.desc)
+                newer = [pws for pws in matches
+                         if pws['name'] == ser.desc and
+                         int(pws['version']) > max_ver]
+                if not newer:
+                    continue
+                latest = max(newer, key=lambda pws: int(pws['version']))
+                data = await pwork.get_series(client, latest['id'])
+                received = data.get('received_total', 0)
+                total = data.get('total', received)
+                states = await pwork.get_series_patch_states(
+                    client, latest['id'])
+                active = any(state in ACTIVE_STATES for state in states)
+                found.append(NewVersion(ser.desc, int(latest['version']),
+                                        latest['id'], received >= total,
+                                        active))
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(_scan())
+    return found
+
+
+def _build_review_command(args, link):
+    """Build the argv to review one series in a child process
+
+    Passes through the global and review options given to --scan so each
+    child behaves like a manual 'patman review -s <link>'. Global options
+    (project, patchwork URL) come before the 'review' subcommand; review
+    options come after it.
+
+    Args:
+        args (Namespace): Command-line arguments
+        link (str): Patchwork series link/ID
+
+    Returns:
+        list of str: Command to run
+    """
+    cmd = [sys.executable, '-m', 'patman']
+    if getattr(args, 'project', None):
+        cmd += ['-p', args.project]
+    if getattr(args, 'patchwork_url', None):
+        cmd += ['-P', args.patchwork_url]
+    if getattr(args, 'verbose', False):
+        cmd.append('-v')
+    if getattr(args, 'debug', False):
+        cmd.append('-D')
+    # The scan has already checked the patch state, so the child need not
+    cmd += ['review', '-s', str(link), '--any-state']
+    if getattr(args, 'upstream', None):
+        cmd += ['-U', args.upstream]
+    if getattr(args, 'reviewer', None):
+        cmd += ['--reviewer', args.reviewer]
+    if getattr(args, 'base_branch', None):
+        cmd += ['-b', args.base_branch]
+    if getattr(args, 'gmail_account', None):
+        cmd += ['--gmail-account', args.gmail_account]
+    if getattr(args, 'signoff', None):
+        cmd += ['--signoff', args.signoff]
+    if getattr(args, 'spelling', None):
+        cmd += ['--spelling', args.spelling]
+    if getattr(args, 'context', None):
+        cmd += ['-c', args.context]
+    if getattr(args, 'create_drafts', False):
+        cmd.append('--create-drafts')
+    return cmd
+
+
+def _review_one_subprocess(args, desc, version, link):
+    """Review a single series in a child process
+
+    Runs 'patman review -s <link>' so the review has its own database
+    connection, event loop and worktree, capturing its combined output to
+    print as one block once it finishes.
+
+    Args:
+        args (Namespace): Command-line arguments
+        desc (str): Series description (cover-letter title)
+        version (int): Series version being reviewed
+        link (str): Patchwork series link/ID
+
+    Returns:
+        ScanResult: outcome of the review
+    """
+    cmd = _build_review_command(args, link)
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True, check=False)
+    return ScanResult(desc, version, link, proc.returncode, proc.stdout)
+
+
+def _print_scan_result(result, done, total):
+    """Print the buffered output of a finished review as a labelled block
+
+    Args:
+        result (ScanResult): Result to print
+        done (int): Number of reviews finished so far, including this one
+        total (int): Total number of reviews being run
+    """
+    status = 'ok' if not result.returncode else f'failed ({result.returncode})'
+    tout.notice('')
+    tout.notice(f"===== [{done}/{total}] v{result.version} of "
+                f"'{result.desc}' (link {result.link}): {status} =====")
+    if result.output:
+        tout.notice(result.output.rstrip())
+
+
+def _do_scan(args, pwork, cser):
+    """Scan patchwork for new versions of already-reviewed series
+
+    For every reviewed series, look for a version on patchwork higher than
+    the latest one reviewed. Only the highest version is considered: if it
+    has not fully appeared on patchwork yet, the series is left to wait
+    rather than reviewing an older, superseded version. Complete versions
+    are reviewed, each in its own child process, up to --jobs at a time.
+
+    Args:
+        args (Namespace): Command-line arguments
+        pwork (Patchwork): Configured patchwork instance
+        cser (Cseries): Open cseries instance
+
+    Returns:
+        int: 0 on success, 1 if any review failed
+    """
+    found = _scan_new_versions(pwork, cser)
+    if not found:
+        tout.notice('No new versions found')
+        return 0
+
+    any_state = getattr(args, 'any_state', False)
+    to_review = []
+    waiting = 0
+    skipped = 0
+    for new in found:
+        if not new.active and not any_state:
+            skipped += 1
+            tout.notice(f"Skipping v{new.version} of '{new.desc}' "
+                        '(not active on patchwork)')
+        elif new.complete:
+            tout.notice(f"New version v{new.version} of '{new.desc}'")
+            to_review.append(new)
+        else:
+            waiting += 1
+            tout.notice(f"Waiting for v{new.version} of '{new.desc}' "
+                        'to fully appear')
+
+    total = len(to_review)
+    if getattr(args, 'dry_run', False):
+        for new in to_review:
+            tout.notice(f"Would review v{new.version} of '{new.desc}'")
+        tout.notice(f'Dry run: {len(found)} new, {total} to review, '
+                    f'{waiting} waiting, {skipped} skipped')
+        return 0
+
+    failed = 0
+    if total:
+        jobs = max(1, getattr(args, 'jobs', 1))
+        tout.notice(f'Launching {total} review(s), {min(jobs, total)} '
+                    'at a time')
+        done = 0
+        with futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            pending = [pool.submit(_review_one_subprocess, args, new.desc,
+                                   new.version, new.link)
+                       for new in to_review]
+            for future in futures.as_completed(pending):
+                result = future.result()
+                done += 1
+                _print_scan_result(result, done, total)
+                if result.returncode:
+                    failed += 1
+
+    tout.notice(f'Scanned: {len(found)} new, {total - failed} reviewed, '
+                f'{waiting} waiting, {skipped} skipped, {failed} failed')
+    return 1 if failed else 0
+
+
+def _do_relink(args, cser):
+    """Merge review series that were split across versions
+
+    Older patman stored each version of a series under its own record,
+    keyed by the raw '[vN,0/M] ...' cover-letter subject, so the versions
+    of one series did not link and follow-up reviews had no earlier
+    feedback for context. Group the review series by their cleaned title,
+    merge each group into a single series holding all the versions and
+    clean the stored description. The database is backed up first.
+
+    Args:
+        args (Namespace): Command-line arguments (unused)
+        cser (Cseries): Open cseries instance
+
+    Returns:
+        int: 0 on success
+    """
+    backup = f'{cser.db.db_path}.bak'
+    shutil.copy2(cser.db.db_path, backup)
+    tout.notice(f'Backed up database to {backup}')
+
+    series = cser.db.series_get_dict(include_archived=True, reviews_only=True)
+    groups = {}
+    for ser in series.values():
+        groups.setdefault(_clean_series_name(ser.desc), []).append(ser)
+
+    merged = 0
+    cleaned = 0
+    for clean, group in groups.items():
+        group.sort(key=lambda ser: ser.idnum)
+        canon = group[0]
+        if canon.desc != clean:
+            cser.db.series_set_desc(canon.idnum, clean)
+            cleaned += 1
+        for other in group[1:]:
+            for svid in cser.db.ser_ver_get_svids(other.idnum):
+                cser.db.ser_ver_set_series(svid, canon.idnum)
+            cser.db.series_remove(other.idnum)
+            merged += 1
+    cser.commit()
+    tout.notice(f'Relinked {merged} duplicate series record(s); cleaned '
+                f'{cleaned} description(s)')
+    return 0
+
+
 def do_review(args, pwork, cser):
     """Run the review command
 
-    Dispatches to learn-voice, sync, or the main review flow
-    which fetches, applies, reviews and optionally drafts.
+    Dispatches to learn-voice, sync, scan, relink, or the main review
+    flow which fetches, applies, reviews and optionally drafts.
 
     Args:
         args (Namespace): Command-line arguments
@@ -2008,6 +2757,12 @@ def do_review(args, pwork, cser):
 
     if args.sync:
         return _do_sync(args, cser)
+
+    if args.relink:
+        return _do_relink(args, cser)
+
+    if args.scan:
+        return _do_scan(args, pwork, cser)
 
     has_patch = getattr(args, 'patch', None)
     has_patch_title = getattr(args, 'patch_title', None)
@@ -2026,48 +2781,7 @@ def do_review(args, pwork, cser):
     elif not link:
         link = search_series(pwork, args.title)
 
-    series_data, clean_name, version, patch_count = \
-        _fetch_series(pwork, link)
-
-    ctx = ReviewContext(pwork, cser, series_data)
-    ctx.version = version
-    ctx.patch_count = patch_count
-
-    result = _find_or_register(ctx, args, clean_name, link)
-    if result is None:
-        return 0
-    ctx.series_id, ctx.svid = result
-
-    ctx.upstream_branch = _get_upstream_branch(args, cser)
-    ctx.main_repo = gitutil.get_top_level()
-    ups = pwork.upstream if pwork else None
-    ctx.branch_name = _make_review_name(link, ups)
-    wt_path = cser_helper.review_worktree_path(ctx.main_repo, ctx.branch_name)
-    tout.notice(f'Using review worktree {wt_path}')
-    ctx.repo_path = gitutil.ensure_worktree(
-        ctx.main_repo, wt_path, ctx.branch_name, ctx.upstream_branch)
-
-    if not _apply_and_check(ctx, link):
-        return 1
-
-    if args.apply_only:
-        tout.notice('Apply-only mode; skipping review')
-        return 0
-
-    ctx.patch_selection = parse_patch_selection(args.patches)
-    ctx.reviewer_name, ctx.reviewer_email = _parse_reviewer(args)
-    ctx.signoff = args.signoff or None
-    if ctx.signoff:
-        ctx.signoff = ctx.signoff.replace('\\n', '\n')
-    ctx.spelling = args.spelling
-    ctx.context = _read_context(args.context) if args.context else None
-    ctx.comments_path = _write_comments_file(series_data, pwork)
-
-    _run_and_store_reviews(ctx, args)
-    workflow.reviewed(cser, ctx.series_id, ctx.svid)
-    gitutil.remove_worktree(ctx.main_repo, wt_path)
-
-    return 0
+    return _review_link(args, pwork, cser, link)
 
 
 VOICE_PATH = os.path.join(os.path.expanduser('~/.config/patman.d'),

@@ -324,6 +324,24 @@ def create_draft(service, to, subject, body,
     return draft
 
 
+def delete_draft(service, draft_id):
+    """Delete a Gmail draft
+
+    A draft that no longer exists (already sent or deleted by hand) is
+    ignored rather than raising.
+
+    Args:
+        service (googleapiclient.discovery.Resource): Gmail API service
+        draft_id (str): ID of the draft to delete
+    """
+    from googleapiclient.errors import HttpError
+    try:
+        service.users().drafts().delete(userId='me', id=draft_id).execute()
+    except HttpError as exc:
+        if exc.resp.status != 404:
+            raise
+
+
 def _build_cc(headers, list_email):
     """Build a CC list from the original patch headers
 

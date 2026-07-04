@@ -830,6 +830,29 @@ class Database:  # pylint:disable=R0904
             return SerVer(*recs[0])
         return [SerVer(*x) for x in recs]
 
+    def ser_ver_get_svids(self, series_idnum):
+        """Get all ser_ver IDs for a series
+
+        Args:
+            series_idnum (int): Series ID
+
+        Return:
+            list of int: svids of every version of the series
+        """
+        res = self.execute('SELECT id FROM ser_ver WHERE series_id = ?',
+                           (series_idnum,))
+        return [row[0] for row in res.fetchall()]
+
+    def ser_ver_set_series(self, svid, series_idnum):
+        """Move a ser_ver record to a different series
+
+        Args:
+            svid (int): ser_ver ID to move
+            series_idnum (int): Series ID to attach it to
+        """
+        self.execute('UPDATE ser_ver SET series_id = ? WHERE id = ?',
+                     (series_idnum, svid))
+
     def ser_ver_get_ids_for_series(self, series_idnum, version=None):
         """Get a list of ser_ver records for a given series ID
 
@@ -1431,25 +1454,28 @@ class Database:  # pylint:disable=R0904
         return [Review(*row) for row in res.fetchall()]
 
     def review_get_previous(self, series_id, version):
-        """Get reviews from the previous version of a series
+        """Get reviews from the most recent earlier version of a series
 
-        Looks up the ser_ver for version-1 and returns its reviews, so
-        they can be provided as context when reviewing a new version.
+        Returns the reviews of the highest version below the current one
+        that actually has reviews, so they can be provided as context when
+        reviewing a new version. Skipping over versions with no reviews
+        means a gap (e.g. an intermediate version that was never reviewed)
+        still yields the earlier feedback rather than nothing.
 
         Args:
             series_id (int): Series ID
             version (int): Current version being reviewed
 
         Return:
-            list of Review: Reviews from version-1, or empty list
+            list of Review: Reviews from the latest earlier reviewed
+                version, or empty list
         """
-        prev_version = version - 1
-        if prev_version < 1:
-            return []
         res = self.execute(
             'SELECT sv.id FROM ser_ver sv '
-            'WHERE sv.series_id = ? AND sv.version = ?',
-            (series_id, prev_version))
+            'JOIN review r ON r.svid = sv.id '
+            'WHERE sv.series_id = ? AND sv.version < ? '
+            'ORDER BY sv.version DESC LIMIT 1',
+            (series_id, version))
         row = res.fetchone()
         if not row:
             return []

@@ -342,6 +342,16 @@ def add_series_subparser(subparsers):
     ren = series_subparsers.add_parser('rename')
     ren.add_argument('-N', '--new-name', help='New name for the series')
 
+    rev = series_subparsers.add_parser(
+        'review', help='AI-review the series and store the result')
+    rev.add_argument('-f', '--force', action='store_true',
+                     help='Re-review even if reviews are already stored')
+    rev.add_argument('--spelling', type=str, default='British',
+                     help='Spelling convention for review comments')
+    rev.add_argument('-c', '--context', type=str, default=None,
+                     help="Extra context for the review agent, or '@path' "
+                          'to read it from a file')
+
     series_subparsers.add_parser('rm')
 
     snotes = series_subparsers.add_parser('save-notes')
@@ -588,6 +598,10 @@ def add_review_subparser(subparsers):
         '-d', '--create-drafts', action='store_true',
         help='Create Gmail draft emails for each review')
     review.add_argument(
+        '--redraft', action='store_true',
+        help='Recreate Gmail drafts from the stored reviews even when a '
+             'draft already exists, to recover after an error')
+    review.add_argument(
         '--gmail-account', type=str, default=None,
         help='Gmail account to create drafts in (e.g. user@gmail.com)')
     review.add_argument(
@@ -607,6 +621,14 @@ def add_review_subparser(subparsers):
     review.add_argument(
         '--apply-only', action='store_true',
         help='Only download and apply patches, skip AI review')
+    review.add_argument(
+        '--coverity', action='store_true',
+        help='Run Coverity on the base and the series, and feed the new '
+             'defects into the review (needs the cov-* tools on PATH)')
+    review.add_argument(
+        '--coverity-defconfig', type=str, default=None,
+        help='Board defconfig to build for --coverity '
+             '(default: sandbox_defconfig)')
     review.add_argument(
         '--signoff', type=str, default='',
         help="Sign-off for reviews with comments (from .patman settings)")
@@ -628,8 +650,25 @@ def add_review_subparser(subparsers):
         help='Check if review drafts have been sent and record the '
              'final email content')
     review.add_argument(
+        '--scan', action='store_true',
+        help='Scan patchwork for new versions of already-reviewed series '
+             'and review the latest version once it has fully appeared')
+    review.add_argument(
+        '--relink', action='store_true',
+        help='Repair the database by merging review series that were split '
+             'across versions, so follow-up reviews see earlier feedback')
+    review.add_argument(
+        '-j', '--jobs', type=int, default=4,
+        help='Number of series to review in parallel with --scan '
+             '(default: 4)')
+    review.add_argument(
         '-f', '--force', action='store_true',
         help='Force re-review even if the series was already reviewed')
+    review.add_argument(
+        '--any-state', action='store_true',
+        help='Review the series even if no patch is in an active state '
+             '(new, RFC, under-review, changes-requested or '
+             'needs-review-ack)')
     review.add_argument(
         '-c', '--context', type=str, default=None,
         help="Extra context for the review agent — e.g. 'this is RFC, "

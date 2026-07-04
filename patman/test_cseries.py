@@ -9,6 +9,7 @@ import contextlib
 from datetime import datetime
 import os
 import re
+import types
 import unittest
 from unittest import mock
 
@@ -4666,6 +4667,12 @@ Date:   .*
             raise ValueError(
                 f'Fake Patchwork unknown series_id: {series_id}')
 
+        m_pstate = re.match(r'patches/\?series=(\d+)$', subpath)
+        if m_pstate:
+            sid = int(m_pstate.group(1))
+            states = getattr(self, 'review_states', {}).get(sid, ['new'])
+            return [{'id': i, 'state': st} for i, st in enumerate(states)]
+
         m_patch = re.match(r'patches/(\d+)/$', subpath)
         if m_patch:
             return {
@@ -4882,6 +4889,385 @@ Date:   .*
         output = out.getvalue()
         self.assertIn('Created 1 Gmail draft', output)
 
+    def test_review_redraft(self):
+        """Test --redraft recreates drafts for an already-reviewed series"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        def run(*extra):
+            mocks = self._mock_review()
+            with contextlib.ExitStack() as stack:
+                for m in mocks:
+                    stack.enter_context(m)
+                with mock.patch('patman.gmail.check_available',
+                                return_value=True):
+                    with mock.patch('patman.gmail.get_service') as mock_svc:
+                        mock_svc.return_value.users.return_value \
+                            .drafts.return_value \
+                            .create.return_value \
+                            .execute.return_value = {'id': 'draft123'}
+                        mock_svc.return_value.users.return_value \
+                            .messages.return_value \
+                            .list.return_value \
+                            .execute.return_value = {'messages': []}
+                        with terminal.capture() as (out, _):
+                            self.run_review('-s', str(self.REVIEW_LINK),
+                                            *extra, pwork=pwork)
+            return out.getvalue()
+
+        # The first review stores the reviews and creates the drafts
+        self.assertIn('Created 1 Gmail draft', run('--create-drafts'))
+
+        # Re-running with --create-drafts leaves the existing drafts alone
+        output = run('--create-drafts')
+        self.assertIn('Already reviewed', output)
+        self.assertIn('All reviews already have Gmail drafts', output)
+
+        # --redraft deletes the old drafts and recreates them
+        with mock.patch('patman.gmail.delete_draft') as mock_del:
+            output = run('--redraft')
+        self.assertIn('Already reviewed', output)
+        self.assertIn('Deleted 1 old Gmail draft', output)
+        self.assertIn('Created 1 Gmail draft', output)
+        mock_del.assert_called_once()
+
+    def test_delete_gmail_drafts(self):
+        """Test only reviews that have a recorded draft are deleted"""
+        def rev(idnum, draft_id):
+            return database.Review(
+                idnum=idnum, svid=1, seq=idnum, body='b', approved=1,
+                timestamp='t', draft_id=draft_id, status='draft',
+                gmail_msg_id=None, gmail_thread_id=None)
+
+        reviews = [rev(1, 'd1'), rev(2, None), rev(3, 'd3')]
+        args = types.SimpleNamespace(gmail_account=None)
+        with mock.patch('patman.gmail.check_available', return_value=True), \
+                mock.patch('patman.gmail.get_service'), \
+                mock.patch('patman.gmail.delete_draft') as mock_del:
+            with terminal.capture() as (out, _):
+                review._delete_gmail_drafts(args, reviews)
+        self.assertEqual(2, mock_del.call_count)
+        self.assertIn('Deleted 2 old Gmail draft', out.getvalue())
+
+    def test_review_force_deletes_drafts(self):
+        """Test -f re-review removes the old Gmail drafts before recreating"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        def run(*extra):
+            mocks = self._mock_review()
+            with contextlib.ExitStack() as stack:
+                for m in mocks:
+                    stack.enter_context(m)
+                with mock.patch('patman.gmail.check_available',
+                                return_value=True), \
+                        mock.patch('patman.gmail.get_service') as mock_svc:
+                    mock_svc.return_value.users.return_value \
+                        .drafts.return_value.create.return_value \
+                        .execute.return_value = {'id': 'draft123'}
+                    mock_svc.return_value.users.return_value \
+                        .messages.return_value.list.return_value \
+                        .execute.return_value = {'messages': []}
+                    with terminal.capture() as (out, _):
+                        self.run_review('-s', str(self.REVIEW_LINK), *extra,
+                                        pwork=pwork)
+            return out.getvalue()
+
+        # First review creates a draft
+        self.assertIn('Created 1 Gmail draft', run('--create-drafts'))
+
+        # Forced re-review with -d deletes the old draft first
+        with mock.patch('patman.gmail.delete_draft') as mock_del:
+            output = run('-f', '--create-drafts')
+        self.assertIn('Re-reviewing (forced)', output)
+        self.assertIn('Deleted 1 old Gmail draft', output)
+        mock_del.assert_called_once()
+
+    def _fake_patchwork_review_incomplete(self, subpath):
+        """Fake Patchwork where v2 has not fully appeared yet"""
+        data = self._fake_patchwork_review(subpath)
+        m_series = re.match(r'series/(\d+)/$', subpath)
+        if m_series and int(m_series.group(1)) == self.REVIEW_LINK_V2:
+            data['total'] = 2
+            data['received_total'] = 1
+        return data
+
+    def _review_v1(self, pwork, link=None):
+        """Review the given series in-process, to seed the database"""
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as _:
+                self.run_review('-s', str(link or self.REVIEW_LINK),
+                                pwork=pwork)
+
+    def test_review_scan(self):
+        """Test --scan launches a review of a new version"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review v1 first to record the series
+        self._review_v1(pwork)
+
+        # Scanning should launch a review of v2 in a child process
+        launched = []
+
+        def fake_sub(args, desc, version, link):
+            launched.append((version, link))
+            return review.ScanResult(desc, version, link, 0, 'reviewed v2')
+
+        with mock.patch('patman.review._review_one_subprocess',
+                        side_effect=fake_sub):
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', pwork=pwork)
+        output = out.getvalue()
+        self.assertIn('New version v2', output)
+        self.assertIn('Launching 1 review(s), 1 at a time', output)
+        self.assertIn('[1/1]', output)
+        self.assertIn('reviewed v2', output)
+        self.assertIn('Scanned: 1 new, 1 reviewed, 0 waiting, 0 skipped, 0 failed',
+                      output)
+        self.assertEqual([(2, self.REVIEW_LINK_V2)], launched)
+
+    def test_review_scan_dry_run(self):
+        """Test --scan -n reports what it would do without reviewing"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review v1 first so v2 shows up as a new version
+        self._review_v1(pwork)
+
+        with mock.patch('patman.review._review_one_subprocess') as mock_sub:
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', '-n', pwork=pwork)
+        output = out.getvalue()
+        self.assertIn('Would review v2', output)
+        self.assertIn('Dry run: 1 new, 1 to review, 0 waiting, 0 skipped',
+                      output)
+        mock_sub.assert_not_called()
+
+    def test_review_scan_no_new(self):
+        """Test --scan reports nothing when there is no newer version"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review the latest version (v2)
+        self._review_v1(pwork, self.REVIEW_LINK_V2)
+
+        with mock.patch('patman.review._review_one_subprocess') as mock_sub:
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', pwork=pwork)
+        self.assertIn('No new versions found', out.getvalue())
+        mock_sub.assert_not_called()
+
+    def test_review_scan_incomplete(self):
+        """Test --scan waits when the newest version is incomplete"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review_incomplete)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review v1 (complete)
+        self._review_v1(pwork)
+
+        # v2 is only partly on patchwork; scan should wait, not review it
+        with mock.patch('patman.review._review_one_subprocess') as mock_sub:
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', pwork=pwork)
+        output = out.getvalue()
+        self.assertIn('Waiting for v2', output)
+        self.assertIn('Scanned: 1 new, 0 reviewed, 1 waiting, 0 skipped, 0 failed',
+                      output)
+        mock_sub.assert_not_called()
+
+    def test_review_inactive_refused(self):
+        """Test reviewing a non-active series is refused with the flag named"""
+        cser = self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+        self.review_states = {self.REVIEW_LINK: ['superseded']}
+
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as (out, _):
+                self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork,
+                                expect_ret=1)
+        output = out.getvalue()
+        self.assertIn('not active', output)
+        self.assertIn('--any-state', output)
+
+        # Nothing was recorded
+        self.db_open()
+        self.assertIsNone(cser.db.series_find_by_link(str(self.REVIEW_LINK)))
+
+    def test_review_inactive_any_state(self):
+        """Test --any-state reviews a non-active series anyway"""
+        cser = self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+        self.review_states = {self.REVIEW_LINK: ['superseded']}
+
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as _:
+                self.run_review('-s', str(self.REVIEW_LINK), '--any-state',
+                                pwork=pwork)
+        self.db_open()
+        self.assertIsNotNone(cser.db.series_find_by_link(str(self.REVIEW_LINK)))
+
+    def test_review_scan_skips_inactive(self):
+        """Test --scan skips a new version that is not active"""
+        self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Review v1 first (active)
+        self._review_v1(pwork)
+
+        # v2 has appeared but is not in an active state
+        self.review_states = {self.REVIEW_LINK_V2: ['superseded']}
+        with mock.patch('patman.review._review_one_subprocess') as mock_sub:
+            with terminal.capture() as (out, _):
+                self.run_review('--scan', pwork=pwork)
+        output = out.getvalue()
+        self.assertIn('Skipping v2', output)
+        self.assertIn('Scanned: 1 new, 0 reviewed, 0 waiting, 1 skipped, '
+                      '0 failed', output)
+        mock_sub.assert_not_called()
+
+    def test_review_scan_command(self):
+        """Test the child review command passes through the right options"""
+        args = types.SimpleNamespace(
+            project='myproj', patchwork_url='https://pw.example',
+            verbose=False, debug=False, upstream='us', reviewer=None,
+            base_branch=None, gmail_account=None, signoff='',
+            spelling='British', context=None, create_drafts=True)
+        cmd = review._build_review_command(args, self.REVIEW_LINK_V2)
+
+        self.assertEqual(['-m', 'patman'], cmd[1:3])
+        self.assertIn('review', cmd)
+        # Global options come before the subcommand
+        self.assertLess(cmd.index('-P'), cmd.index('review'))
+        self.assertEqual('https://pw.example', cmd[cmd.index('-P') + 1])
+        self.assertEqual('myproj', cmd[cmd.index('-p') + 1])
+        # Series and review options come after
+        self.assertEqual(str(self.REVIEW_LINK_V2), cmd[cmd.index('-s') + 1])
+        self.assertEqual('us', cmd[cmd.index('-U') + 1])
+        self.assertIn('--create-drafts', cmd)
+        # The scan has already checked the state, so the child skips it
+        self.assertIn('--any-state', cmd)
+
+    def test_register_series_cleans_desc(self):
+        """Test a series is stored under its cleaned title, not the cover name"""
+        cser = self.get_cser()
+        series_data = {
+            'patches': [{'id': 1, 'name': '[v2,1/1] foo bar'}],
+            'cover_letter': {'id': 9, 'name': '[v2,0/1] foo bar'},
+        }
+        # Two versions of the same series must land under one record
+        review._register_series(cser, 'foo bar', 1, '500', series_data)
+        review._register_series(cser, 'foo bar', 2, '501', series_data)
+        cser.commit()
+
+        self.db_open()
+        v1 = cser.db.series_find_by_link('500')
+        v2 = cser.db.series_find_by_link('501')
+        self.assertIsNotNone(v1)
+        self.assertIsNotNone(v2)
+        self.assertEqual(v1[0], v2[0])  # linked under the same series
+
+    def test_review_get_previous_skips_gap(self):
+        """Test prior-review lookup skips versions that have no reviews"""
+        cser = self.get_cser()
+        db = cser.db
+        sid = db.series_add('pw-x-review', 'foo bar')
+        db.series_set_source(sid, 'review')
+        sv1 = db.ser_ver_add(sid, 1, link='10')
+        db.review_add(sv1, 1, 'v1 body', 1, '2026-01-01')
+        db.ser_ver_add(sid, 2, link='11')  # v2 has no reviews
+        cser.commit()
+
+        # Reviewing v3 should fall back to v1, not the empty v2
+        prev = db.review_get_previous(sid, 3)
+        self.assertEqual(1, len(prev))
+        self.assertEqual('v1 body', prev[0].body)
+
+    def test_review_relink(self):
+        """Test --relink merges version records split by the old bug"""
+        cser = self.get_cser()
+        db = cser.db
+        # Simulate the old bug: two unlinked records, raw prefixed descs
+        s1 = db.series_add('pw-1-review', '[v1,0/2] foo bar')
+        db.series_set_source(s1, 'review')
+        sv1 = db.ser_ver_add(s1, 1, link='1')
+        db.review_add(sv1, 1, 'v1 body', 1, '2026-01-01')
+        s2 = db.series_add('pw-2-review', '[v2,0/3] foo bar')
+        db.series_set_source(s2, 'review')
+        sv2 = db.ser_ver_add(s2, 2, link='2')
+        db.review_add(sv2, 1, 'v2 body', 1, '2026-01-02')
+        cser.commit()
+
+        # Before: separate series, v2 has no prior context
+        self.assertNotEqual(s1, s2)
+        self.assertEqual([], db.review_get_previous(s2, 2))
+
+        with terminal.capture() as (out, _):
+            self.run_review('--relink')
+        self.assertIn('Relinked 1', out.getvalue())
+
+        # After: one series with both versions; v2 now sees v1's review
+        self.db_open()
+        v1 = cser.db.series_find_by_link('1')
+        v2 = cser.db.series_find_by_link('2')
+        self.assertEqual(v1[0], v2[0])
+        prev = cser.db.review_get_previous(v1[0], 2)
+        self.assertEqual(1, len(prev))
+        self.assertEqual('v1 body', prev[0].body)
+
+    def test_review_lock_in_progress(self):
+        """Test a review is refused when one is already running for it"""
+        cser = self.get_cser()
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        # Hold the lock for this series, as if a review were in progress
+        ups = pwork.upstream if pwork else None
+        branch = review._make_review_name(str(self.REVIEW_LINK), ups)
+        lock_fd = review._acquire_review_lock(self.tmpdir, branch)
+        try:
+            mocks = self._mock_review()
+            with contextlib.ExitStack() as stack:
+                for m in mocks:
+                    stack.enter_context(m)
+                with terminal.capture() as (out, err):
+                    self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork)
+            self.assertIn('already in progress', err.getvalue())
+        finally:
+            review._release_review_lock(lock_fd)
+
+        # The refused review recorded nothing
+        self.db_open()
+        self.assertIsNone(cser.db.series_find_by_link(str(self.REVIEW_LINK)))
+
+        # With the lock released, the review now runs
+        mocks = self._mock_review()
+        with contextlib.ExitStack() as stack:
+            for m in mocks:
+                stack.enter_context(m)
+            with terminal.capture() as _:
+                self.run_review('-s', str(self.REVIEW_LINK), pwork=pwork)
+        self.db_open()
+        self.assertIsNotNone(cser.db.series_find_by_link(str(self.REVIEW_LINK)))
+
     def _make_review_ctx(self, reviewer_name='Test', reviewer_email='test@test.com',
                          author_name='', author_email='', date='', signoff=None,
                          diffstat=None):
@@ -4930,6 +5316,278 @@ VERDICT: skip"""
         self.assertEqual('Michal', greeting)
         self.assertEqual('skip', verdict)
         self.assertEqual([], comments)
+
+    def test_review_empty_dropped(self):
+        """Test a non-approval with no comments yields no review"""
+        from patman import review as review_mod
+
+        ctx = self._make_review_ctx(author_name='Quentin',
+            author_email='qstrydom0@gmail.com', date='2026-06-19')
+        ctx.repo_path = self.tmpdir
+        ctx.previous_reviews = {}
+        cmt = types.SimpleNamespace(hash='abc1234', subject='spl: pad',
+                                    msg='spl: pad\n\nbody text', rtags={})
+
+        async def mock_agent(prompt, options):
+            # A greeting but no COMMENT block and no VERDICT line
+            return True, 'GREETING: Quentin\n'
+
+        loop = asyncio.new_event_loop()
+        with mock.patch.object(review_mod.claude_mod, 'run_agent_collect',
+                               side_effect=mock_agent), \
+             mock.patch.object(review_mod, 'ClaudeAgentOptions',
+                               mock.MagicMock()), \
+             mock.patch.object(review_mod, '_build_review_prompt',
+                               return_value='prompt'), \
+             mock.patch.object(review_mod.gitutil, 'diff_stat',
+                               return_value=''), \
+             terminal.capture():
+            result = loop.run_until_complete(
+                review_mod._review_single_patch(
+                    ctx, cmt, 1, [(1, 'abc1234', 'spl: pad')]))
+        loop.close()
+        self.assertIsNone(result)
+
+    def test_review_is_code_comment(self):
+        """Test code comments are told apart from commit-message comments"""
+        from patman.review import _is_code_comment
+
+        self.assertTrue(_is_code_comment(
+            '> diff --git a/foo.c b/foo.c\n> @@ -1 +1 @@\n> +code'))
+        self.assertTrue(_is_code_comment('> @@ -10,2 +10,3 @@ func()'))
+        self.assertFalse(_is_code_comment(
+            '> When CONFIG_SPL_SEPARATE_BSS is enabled'))
+        self.assertFalse(_is_code_comment(''))
+
+    def test_review_commit_msg_comment_first(self):
+        """Test commit-message comments come before code comments"""
+        from patman.review import format_review_email
+
+        ctx = self._make_review_ctx(author_name='Quentin',
+            author_email='q@gmail.com', date='2026-06-19')
+        # Agent emitted the code comment first, commit-message comment second
+        comments = [
+            ('> diff --git a/foo.c b/foo.c\n> @@ -1 +1 @@\n> +code line',
+             'This code comment.'),
+            ('> When CONFIG_SPL_SEPARATE_BSS is enabled',
+             'This commit-message comment.'),
+        ]
+        body = format_review_email(ctx, 'Quentin', 'changes_needed', comments)
+        self.assertLess(body.index('This commit-message comment.'),
+                        body.index('This code comment.'))
+
+    def test_coverity_find_new_defects(self):
+        """Test only defects absent from the base are reported as new"""
+        from patman import coverity
+        base = [{'mergeKey': 'a'}, {'mergeKey': 'b'}]
+        patched = [{'mergeKey': 'a'}, {'mergeKey': 'c'}]
+        new = coverity.find_new_defects(base, patched)
+        self.assertEqual([{'mergeKey': 'c'}], new)
+
+    def test_coverity_format_defect(self):
+        """Test a defect is summarised with checker, location and text"""
+        from patman import coverity
+        defect = {
+            'checkerName': 'RESOURCE_LEAK',
+            'mainEventFilePathname': 'drivers/foo.c',
+            'mainEventLineNumber': 42,
+            'functionDisplayName': 'foo_probe',
+            'subcategoryLongDescription': 'Handle leaked',
+        }
+        summary = coverity.format_defect(defect)
+        self.assertEqual(
+            'RESOURCE_LEAK: drivers/foo.c:42 (foo_probe): Handle leaked',
+            summary)
+
+    def test_coverity_check_available(self):
+        """Test availability depends on all three cov tools being present"""
+        from patman import coverity
+        with mock.patch('patman.coverity.shutil.which',
+                        return_value='/usr/bin/x'):
+            self.assertTrue(coverity.check_available())
+        with mock.patch('patman.coverity.shutil.which', return_value=None):
+            self.assertFalse(coverity.check_available())
+
+    def test_coverity_analyze(self):
+        """Test analyze() configures, builds under cov-build and parses"""
+        import json
+        from patman import coverity
+        emit = os.path.join(self.tmpdir, 'emit')
+        os.makedirs(emit, exist_ok=True)
+        cmds = []
+
+        def fake_run(cmd, cwd):
+            cmds.append(cmd)
+            if cmd[0] == 'cov-format-errors':
+                out = cmd[cmd.index('--json-output-v7') + 1]
+                with open(out, 'w', encoding='utf-8') as fd:
+                    json.dump({'issues': [{'mergeKey': 'k1'}]}, fd)
+
+        with mock.patch('patman.coverity._run', side_effect=fake_run):
+            issues = coverity.analyze(self.tmpdir, 'sandbox_defconfig', emit)
+        self.assertEqual([{'mergeKey': 'k1'}], issues)
+        self.assertEqual(['make', 'sandbox_defconfig'], cmds[0])
+        self.assertEqual('cov-build', cmds[1][0])
+        self.assertEqual('cov-analyze', cmds[2][0])
+
+    def test_run_coverity_unavailable(self):
+        """Test --coverity is skipped cleanly when the tools are missing"""
+        from patman import review as review_mod
+        ctx = self._make_review_ctx()
+        args = types.SimpleNamespace(coverity_defconfig=None)
+        with mock.patch('patman.coverity.check_available',
+                        return_value=False):
+            with terminal.capture() as (out, err):
+                result = review_mod._run_coverity(ctx, args)
+        self.assertIsNone(result)
+        self.assertIn('skipping --coverity', err.getvalue())
+
+    def test_run_coverity_reports_new(self):
+        """Test _run_coverity returns a summary of the new defects only"""
+        from patman import review as review_mod
+        ctx = self._make_review_ctx()
+        ctx.main_repo = self.tmpdir
+        ctx.repo_path = self.tmpdir
+        ctx.upstream_branch = 'us/master'
+        base = [{'mergeKey': 'a'}]
+        patched = [
+            {'mergeKey': 'a'},
+            {'mergeKey': 'b', 'checkerName': 'RESOURCE_LEAK',
+             'mainEventFilePathname': 'drivers/foo.c',
+             'mainEventLineNumber': 42,
+             'subcategoryLongDescription': 'Handle leaked'},
+        ]
+        args = types.SimpleNamespace(coverity_defconfig=None)
+        with mock.patch('patman.coverity.check_available',
+                        return_value=True), \
+                mock.patch('patman.coverity.analyze',
+                           side_effect=[base, patched]), \
+                mock.patch('patman.review.subprocess.run'), \
+                mock.patch('patman.review.gitutil.remove_worktree'):
+            with terminal.capture():
+                text = review_mod._run_coverity(ctx, args)
+        self.assertIn('RESOURCE_LEAK', text)
+        self.assertIn('drivers/foo.c:42', text)
+        self.assertNotIn('mergeKey', text)
+
+    def test_review_prompt_coverity(self):
+        """Test new Coverity defects are placed in the review prompt"""
+        from patman import review as review_mod
+        ctx = self._make_review_ctx()
+        ctx.comments_path = None
+        ctx.spelling = 'British'
+        ctx.coverity_text = '- RESOURCE_LEAK: drivers/foo.c:42: Handle leaked'
+        with mock.patch.object(review_mod, 'get_voice', return_value=None):
+            prompt = review_mod._build_review_prompt(
+                ctx, 'abc1234', 1, [(1, 'abc1234', 'subj')], None)
+        self.assertIn('COVERITY', prompt)
+        self.assertIn('drivers/foo.c:42', prompt)
+
+    def test_review_aligns_by_subject(self):
+        """Test reviews attach to the patchwork patch by subject, not order"""
+        from patman import review as review_mod
+        from patman.review import ReviewContext
+
+        ctx = ReviewContext(None, None, {'patches': [
+            {'name': '[v2,1/3] alpha'},
+            {'name': '[v2,2/3] beta'},
+            {'name': '[v2,3/3] gamma'}]})
+        ctx.branch_name = 'b'
+        ctx.upstream_branch = 'u'
+        ctx.main_repo = self.tmpdir
+        ctx.patch_count = 3
+        ctx.cover_content = None
+        ctx.svid = None
+        ctx.patch_selection = None
+        ctx.reviewer_name = 'Test'
+        ctx.reviewer_email = 't@t.com'
+
+        # The branch has only beta and gamma applied; alpha (1/3) failed to
+        # apply, so a positional mapping would misattribute the reviews
+        commits = [types.SimpleNamespace(subject='beta', hash='h2', rtags={}),
+                   types.SimpleNamespace(subject='gamma', hash='h3', rtags={})]
+        series = types.SimpleNamespace(commits=commits)
+
+        async def fake_single(ctx, cmt, seq, all_commits):
+            return f'review-{cmt.subject}'
+
+        loop = asyncio.new_event_loop()
+        with mock.patch.object(review_mod.claude_mod, 'check_available',
+                               return_value=True), \
+                mock.patch.object(review_mod.patchstream,
+                                  'get_metadata_for_list',
+                                  return_value=series), \
+                mock.patch.object(review_mod, '_review_single_patch',
+                                  side_effect=fake_single), \
+                terminal.capture():
+            bodies = loop.run_until_complete(review_mod.review_patches(ctx))
+        loop.close()
+        # beta is patchwork patch 2 and gamma is 3 -- not 1 and 2
+        self.assertEqual({2: 'review-beta', 3: 'review-gamma'}, bodies)
+
+    def test_format_findings(self):
+        """Test findings are formatted for storage"""
+        from patman.review import _format_findings
+        self.assertEqual('Looks good; no issues found.',
+                         _format_findings('approved', []))
+        body = _format_findings('changes_needed', [('> code line', 'Do X.')])
+        self.assertIn('> code line', body)
+        self.assertIn('Do X.', body)
+
+    def test_series_review_stores(self):
+        """Test 'series review' stores the findings in the database"""
+        from patman import review as review_mod
+        cser = self.get_cser()
+        sid = cser.db.series_add('foo', 'foo')
+        cser.db.ser_ver_add(sid, 1)
+        cser.commit()
+        svid = cser.get_ser_ver(sid, 1).idnum
+
+        commits = [
+            types.SimpleNamespace(hash='h1', subject='alpha',
+                                  msg='alpha\n\nbody', rtags={}),
+            types.SimpleNamespace(hash='h2', subject='beta',
+                                  msg='beta\n\nbody', rtags={})]
+        series = types.SimpleNamespace(
+            commits=commits, cover=['Cover subject', 'cover body'])
+        cover = ('', 'changes_needed', [('', 'Add a Changes-in-v2 block.')])
+        results = [
+            ('', 'changes_needed',
+             [('> diff --git a/x b/x\n> @@ -1 +1 @@', 'Fix this.')], 'm'),
+            ('', 'approved', [], 'm')]
+
+        with mock.patch.object(review_mod.claude_mod, 'check_available',
+                               return_value=True), \
+                mock.patch.object(review_mod.gitutil, 'get_top_level',
+                                  return_value=self.tmpdir), \
+                mock.patch.object(review_mod, '_run_cover_review_sync',
+                                  return_value=cover), \
+                mock.patch.object(review_mod, '_run_patch_review_sync',
+                                  side_effect=results), \
+                terminal.capture():
+            review_mod.review_series(cser, sid, svid, 1, 'foo', series)
+
+        stored = {r.seq: r for r in cser.db.review_get_for_version(svid)}
+        self.assertEqual(3, len(stored))
+        self.assertIn('Changes-in-v2', stored[0].body)  # cover letter (seq 0)
+        self.assertIn('Fix this.', stored[1].body)
+        self.assertEqual(0, stored[1].approved)
+        self.assertIn('Looks good', stored[2].body)
+        self.assertEqual(1, stored[2].approved)
+
+    def test_series_review_already(self):
+        """Test 'series review' refuses to overwrite without --force"""
+        cser = self.get_cser()
+        sid = cser.db.series_add('foo', 'foo')
+        cser.db.ser_ver_add(sid, 1)
+        cser.commit()
+        svid = cser.get_ser_ver(sid, 1).idnum
+        cser.db.review_add(svid, 1, 'body', False, 't')
+        cser.commit()
+
+        with self.assertRaises(ValueError) as cm:
+            cser.review('foo', 1)
+        self.assertIn('already has', str(cm.exception))
 
     def test_review_guess_name(self):
         """Test guessing first name from email address"""

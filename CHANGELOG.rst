@@ -8,6 +8,63 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
+Added
+~~~~~
+- ``series review`` runs an AI review of your own series (added with
+  ``series add``) -- the patches and the cover letter -- and stores the
+  findings in the database, so you can check a series before sending it
+  and re-read the review later with ``series info -r`` without paying
+  for it again.
+- ``review --coverity`` runs Coverity on the base and the patched series
+  and feeds the newly introduced defects into the review as context.
+  ``--coverity-defconfig`` selects the board to build (default
+  sandbox_defconfig). Needs the cov-* tools on PATH.
+- ``review --scan`` looks on patchwork for new versions of series that
+  have already been reviewed and reviews the latest version, once it has
+  fully appeared on patchwork. Reviews run in parallel, each in its own
+  child process and worktree, up to ``--jobs`` at a time (default 4).
+  ``-n`` / ``--dry-run`` shows which series would be reviewed, waiting
+  or skipped, without launching any reviews.
+- ``review --redraft`` recreates the Gmail drafts from the stored
+  reviews even when a draft already exists, to recover after an error.
+- ``review --relink`` repairs a database where versions of a series were
+  stored as separate records, merging them so follow-up reviews see the
+  earlier feedback. It backs up the database first.
+
+Fixed
+~~~~~
+- A review stored each series version under its raw '[vN,0/M] ...' title,
+  so versions of one series did not link and each follow-up review ran
+  without the earlier feedback and raised fresh points. Store the cleaned
+  title instead, so versions link. Existing databases can be repaired
+  with ``review --relink``.
+- Prior-review context now comes from the most recent earlier version
+  that has reviews, rather than strictly the immediately previous one, so
+  a gap in the version history no longer drops the context.
+- ``review -f`` and ``review --redraft`` delete the Gmail drafts they
+  replace, instead of leaving the old ones orphaned as duplicates in the
+  same thread.
+- A patch the review agent has nothing to say about (no comments and not
+  an approval) no longer produces an empty greeting-only review; the
+  patch is left unreviewed instead.
+- Comments on the commit message are now placed before comments on the
+  code in a review, rather than in whatever order the agent emitted them.
+- Reviews attach to the correct patchwork patch by subject rather than by
+  position. When a patch fails to apply, leaving fewer commits on the
+  branch than the series has patches, the remaining reviews no longer
+  shift onto the wrong patches.
+
+Changed
+~~~~~~~
+- ``review`` only reviews a series when at least one of its patches is in
+  an active patchwork state (new, RFC, under-review, changes-requested or
+  needs-review-ack); reviewing an inactive series fails with a message
+  naming ``--any-state``, which overrides the check. ``review --scan``
+  skips inactive series.
+- A review now takes an exclusive lock on its series, so a second review
+  of the same series is refused rather than corrupting its worktree and
+  records.
+
 0.0.11 - 2026-06-18
 -------------------
 

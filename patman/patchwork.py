@@ -452,6 +452,19 @@ class Patchwork:
         """
         return await self._request(client, f'series/{link}/')
 
+    async def get_series_patch_states(self, client, link):
+        """Get the patchwork state of each patch in a series
+
+        Args:
+            client (aiohttp.ClientSession): Session to use
+            link (str): Patchwork series ID
+
+        Returns:
+            list of str: State slug for each patch, e.g. ['new', 'rfc']
+        """
+        res = await self._request(client, f'patches/?series={link}')
+        return [patch.get('state') for patch in res]
+
     async def get_series_mbox(self, client, link):
         """Download the raw mbox file for a series.
 

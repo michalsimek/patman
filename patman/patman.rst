@@ -1289,6 +1289,15 @@ To create Gmail drafts threaded under the original emails::
 Use ``-n`` with ``-d`` for a dry run that shows what would be created
 without calling the Gmail API.
 
+If a draft failed to create or was lost, ``--redraft`` recreates the
+Gmail drafts from the stored reviews, even when the series has already
+been reviewed and the drafts already exist::
+
+    patman review -s 497923 --redraft --gmail-account your@email
+
+Any existing draft is deleted first, so it is not left as a duplicate
+in the thread.
+
 Use ``--apply-only`` to download and apply patches without running the
 AI review -- useful for checking that patches apply cleanly.
 
@@ -1310,9 +1319,47 @@ again::
 
     patman review -s 497923 -U us -f --reviewer 'Your Name <your@email>'
 
+With ``-d``, the Gmail drafts from the previous review are deleted too,
+so the re-review does not leave duplicates in the thread.
+
 If the reviewer email (from ``--reviewer`` or git config) differs from
 the ``--gmail-account``, patman sets the From header on the draft so
 the email is sent with the correct identity.
+
+Reviewing your own series before sending
+----------------------------------------
+
+To get an AI review of your own series before sending it, add the
+series with ``patman series add`` and then run::
+
+    patman series review
+
+This reviews the commits on the current branch (or ``-s <name>``) with
+the same agent, along with the cover letter (stored as patch 0), and
+saves the findings in the database, keyed by version. Because the
+review is expensive, it is saved so you can read it later without
+re-running::
+
+    patman series info -r          # show the stored review
+    patman series info -r 2 3      # just patches 2 and 3
+
+Re-running is refused when a review is already stored; pass ``-f`` to
+review again, replacing the stored one. Unlike ``patman review``, this
+needs no patchwork link and creates no drafts -- it is purely a local
+pre-send check. Reviews from the previous version are used as context,
+so a follow-up review focuses on what changed.
+
+Active series only
+------------------
+
+By default patman only reviews a series when at least one of its
+patches is in an active patchwork state: new, RFC, under-review,
+changes-requested or needs-review-ack. Reviewing a series
+that patchwork has finished with (accepted, superseded, rejected and so
+on) fails with a message naming the override. Use ``--any-state`` to
+review regardless::
+
+    patman review -s 497923 --any-state
 
 How the review works
 --------------------
@@ -1331,8 +1378,20 @@ over the drafts to tighten the language, remove cross-patch duplicates
 and check voice consistency. Approved reviews without comments are
 excluded from refinement to preserve their quoted commit messages.
 
+If the agent has nothing to say about a patch -- no comments and not an
+approval -- no review is produced for it, rather than an empty
+greeting-only reply.
+
+Comments on the commit message are placed before comments on the code,
+matching the usual reply order.
+
 A mechanical cleanup step also runs to remove backticks and fix function
 quoting style (e.g. ``malloc()`` not ```malloc```).
+
+Only one review of a given series runs at a time. If a review for the
+same series is already in progress -- from another patman invocation or
+a scan -- the second is refused rather than corrupting the shared
+review worktree and database records.
 
 Apply step
 ~~~~~~~~~~
@@ -1342,12 +1401,37 @@ changes -- including untracked files -- so build artefacts on the
 current branch don't leak into the review. The original branch and
 stash are restored at the end of the run, including on failure.
 
-If the apply agent finishes but the resulting branch holds fewer
-commits than the series cover letter advertises, patman aborts with a
-message of the form ``Only N of M patches applied to <branch>;
-aborting. Fix the conflicts manually and retry.`` The database row
-for the new version is rolled back so a retry starts from a clean
-state.
+If the apply agent applies some but not all of the patches -- for
+example one depends on a prerequisite series that is not yet upstream
+-- patman warns (``Only N of M patches applied to <branch>; reviewing
+what is there``) and reviews the patches that did apply. Only when
+nothing applies at all does it fail and roll back the new version's
+database row.
+
+Each review is matched to its patchwork patch by subject, not by
+position, so a patch that failed to apply does not shift the remaining
+reviews onto the wrong patches.
+
+Coverity static analysis
+------------------------
+
+With ``--coverity``, patman runs Coverity on the series and feeds the
+new defects into the review. Coverity analyses a whole build rather
+than a diff, so patman builds and analyses the base branch and the
+patched branch separately and reports only the defects the series
+introduces (matched by Coverity's mergeKey)::
+
+    patman review -s 497923 -U us --coverity \
+        --reviewer 'Your Name <your@email>'
+
+This needs the ``cov-build``, ``cov-analyze`` and ``cov-format-errors``
+tools on your PATH; if they are missing the check is skipped with a
+warning. The build uses ``sandbox_defconfig`` by default; use
+``--coverity-defconfig`` to pick another board. Building twice makes
+this much slower than a normal review.
+
+The new defects are passed to the review agent as context, so it can
+raise the ones that fall in the code each patch changes.
 
 Patchwork subcommands
 ---------------------
@@ -1423,6 +1507,34 @@ This:
 - Generates response drafts when appropriate (e.g. answering
   questions, pushing back on objections, or conceding gracefully)
 
+Scanning for new versions
+-------------------------
+
+Rather than reviewing one series at a time, ``--scan`` looks on
+patchwork for new versions of series you have already reviewed and
+reviews them::
+
+    patman review --scan -U us --reviewer 'Your Name <your@email>'
+
+For each reviewed series it takes the highest version on patchwork
+above the latest one reviewed. A version is reviewed only once it has
+fully appeared on patchwork; if the newest version is still arriving,
+the series is left to wait rather than reviewing an older, now
+superseded one. Inactive series (see `Active series only`_) are
+skipped.
+
+Reviews run in parallel, each in its own child process and review
+worktree, up to ``--jobs`` (``-j``) at a time (default 4).
+
+Each review's output is buffered and printed as one block when it
+finishes, prefixed with a ``[done/total]`` counter and ending with a
+summary line::
+
+    Scanned: 3 new, 1 reviewed, 1 waiting, 1 skipped, 0 failed
+
+Use ``-n`` / ``--dry-run`` to see which series would be reviewed,
+waiting or skipped, without launching any reviews.
+
 Review lifecycle
 ----------------
 
@@ -1435,8 +1547,17 @@ Each review goes through these states:
 - **replied**: Author or another reviewer has replied to our review
 
 When reviewing a new version of a previously reviewed series, patman
-loads the previous review as context for the AI, so it can check
-whether earlier issues have been addressed.
+loads the most recent earlier version that has reviews as context for
+the AI, so it can check whether earlier issues were addressed and avoid
+raising fresh points the earlier versions did not. Versions are linked
+by their cleaned cover-letter title.
+
+An older database may have stored each version as a separate, unlinked
+record, leaving follow-up reviews without this context. Repair it by
+merging the split records, which backs up the database (to
+``<db>.bak``) first::
+
+    patman review --relink
 
 Aliases
 -------
