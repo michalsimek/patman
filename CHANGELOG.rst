@@ -10,6 +10,11 @@ Unreleased
 
 Added
 ~~~~~
+- A tracked ``.patman-defaults`` file at the repo root provides
+  project-shipped config defaults that ``~/.patman``, a local ``.patman``
+  and command-line arguments all override, per key. It is the new
+  lowest-priority config layer, so a project can ship a working setup
+  without taking control away from the user.
 - ``series review`` runs an AI review of your own series (added with
   ``series add``) -- the patches and the cover letter -- and stores the
   findings in the database, so you can check a series before sending it

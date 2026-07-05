@@ -121,6 +121,31 @@ possible to override the `project` settings variable or anything else
 in a project-specific way. The values of this "local" configuration
 file take precedence over those of the "global" one.
 
+Config is read from three files, each overriding the previous one on a
+per-key basis (lowest to highest priority):
+
+1. ``.patman-defaults`` at the root of the git repository. This is
+   tracked in git and shipped by the project to provide sensible
+   defaults (such as the patchwork URL or the get_maintainer.pl
+   invocation). Because it is the lowest layer, anyone can override it,
+   so it never takes control away from the user. In a tree whose
+   ``.gitignore`` ignores dot-files (as U-Boot's does), force-add it
+   with ``git add -f .patman-defaults``.
+2. ``~/.patman``, the user's global config.
+3. ``.patman`` at the root of the git repository, the user's per-repo
+   override (not tracked).
+
+Command-line arguments override all three. A project shipping
+``.patman-defaults`` might contain::
+
+    [settings]
+    patchwork_url: https://patchwork.ozlabs.org
+    get_maintainer_script: scripts/get_maintainer.pl --norolestats
+
+A user who sets ``patchwork_url`` in their own ``~/.patman`` (or passes
+``-P``) overrides it; anything they leave unset falls back to these
+defaults.
+
 Aliases are recursive.
 
 If the project provides a checkpatch.pl (in its 'scripts/' or 'tools/'

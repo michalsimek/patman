@@ -381,11 +381,17 @@ def GetItems(config, section):
 def Setup(parser, project_name, argv, config_fname=None):
     """Set up the settings module by reading config files.
 
-    Unless `config_fname` is specified, a `.patman` config file local
-    to the git repository is consulted, followed by the global
-    `$HOME/.patman`. If none exists, the later is created. Values
-    defined in the local config file take precedence over those
-    defined in the global one.
+    Config values are read from three sources, each overriding the
+    previous one on a per-key basis (lowest to highest priority):
+
+      1. `.patman-defaults` in the git repository -- tracked and shipped
+         by the project to provide defaults that anyone can override
+      2. the global `$HOME/.patman` (or `config_fname` if given)
+      3. `.patman` in the git repository -- the user's per-repo override
+
+    Command-line arguments override all of these. If neither of the
+    user's own files (2 or 3) exists, the global one is created; the
+    shipped `.patman-defaults` alone does not trigger that creation.
 
     Args:
         parser:         The parser to update.
@@ -404,22 +410,32 @@ def Setup(parser, project_name, argv, config_fname=None):
 
     if config_fname is None:
         config_fname = '%s/.patman' % os.getenv('HOME')
-    git_local_config_fname = os.path.join(gitutil.get_top_level() or '',
-                                          '.patman')
+    top_level = gitutil.get_top_level() or ''
+    git_base_config_fname = os.path.join(top_level, '.patman-defaults')
+    git_local_config_fname = os.path.join(top_level, '.patman')
 
+    has_base_config = False
     has_config = False
     has_git_local_config = False
     if config_fname is not False:
+        has_base_config = os.path.exists(git_base_config_fname)
         has_config = os.path.exists(config_fname)
         has_git_local_config = os.path.exists(git_local_config_fname)
 
-    # Read the git local config last, so that its values override
-    # those of the global config, if any.
+    # Read lowest priority first so each later file overrides earlier ones
+    # on a per-key basis:
+    #   1. the project's tracked defaults (.patman-defaults)
+    #   2. the user's global ~/.patman
+    #   3. the user's local, per-repo .patman
+    if has_base_config:
+        config.read(git_base_config_fname)
     if has_config:
         config.read(config_fname)
     if has_git_local_config:
         config.read(git_local_config_fname)
 
+    # A shipped .patman-defaults must not suppress creating the user's own
+    # config, so has_base_config is deliberately excluded from this test
     if config_fname is not False and not (has_config or has_git_local_config):
         print("No config file found.\nCreating ~/.patman...\n")
         CreatePatmanConfigFile(config_fname)
