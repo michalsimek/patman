@@ -8,6 +8,9 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
+0.1.0 - 2026-07-05
+------------------
+
 Added
 ~~~~~
 - A tracked ``.patman-defaults`` file at the repo root provides
