@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from patman import cmdline
 from patman import settings
@@ -40,6 +41,7 @@ def _make_parser():
     send = subparsers.add_parser('send')
     send.add_argument('--no-check', action='store_false', dest='check_patch',
                       default=True)
+    send.add_argument('--smtp-server', dest='smtp_server', default=None)
     return parser, send
 
 
@@ -73,6 +75,74 @@ class TestSettings(unittest.TestCase):
                     self.assertEqual('guix-patches', args.project)
                     send_args, _ = send.parse_known_args([])
                     self.assertFalse(send_args.check_patch)
+
+    def test_patman_defaults_layering(self):
+        # .patman-defaults is the lowest-priority layer: global and local
+        # both override it per-key, while a key set only in it falls through
+        with cleared_command_line_args():
+            with empty_git_repository():
+                with tempfile.NamedTemporaryFile() as global_config:
+                    global_config.write(b'[settings]\nproject=global-proj\n')
+                    global_config.flush()
+
+                    with open('.patman-defaults', 'w', buffering=1) as f:
+                        f.write('[settings]\n'
+                                'project: base-proj\n'
+                                'smtp_server: base-smtp\n')
+
+                    parser, send = _make_parser()
+
+                    # global overrides base for 'project'; the base-only
+                    # 'smtp_server' falls through
+                    settings.Setup(parser, 'unknown', [], global_config.name)
+                    args, _ = parser.parse_known_args([])
+                    self.assertEqual('global-proj', args.project)
+                    send_args, _ = send.parse_known_args([])
+                    self.assertEqual('base-smtp', send_args.smtp_server)
+
+                    # the user's local .patman overrides base and global
+                    with open('.patman', 'w', buffering=1) as f:
+                        f.write('[settings]\nproject: local-proj\n')
+                    settings.Setup(parser, 'unknown', [], global_config.name)
+                    args, _ = parser.parse_known_args([])
+                    self.assertEqual('local-proj', args.project)
+                    send_args, _ = send.parse_known_args([])
+                    self.assertEqual('base-smtp', send_args.smtp_server)
+
+                    # a command-line argument overrides every config layer
+                    args, _ = parser.parse_known_args(['-p', 'cli-proj'])
+                    self.assertEqual('cli-proj', args.project)
+
+    def test_patman_defaults_disabled(self):
+        # config_fname=False disables all file reads, the base file
+        # included, so a .patman-defaults present is not applied
+        with cleared_command_line_args():
+            with empty_git_repository():
+                with open('.patman-defaults', 'w', buffering=1) as f:
+                    f.write('[settings]\nproject: base-proj\n')
+                parser, _ = _make_parser()
+                settings.Setup(parser, 'unknown', [], False)
+                args, _ = parser.parse_known_args([])
+                self.assertEqual('unknown', args.project)
+
+    def test_patman_defaults_only(self):
+        # With only .patman-defaults present, its values are used, but it
+        # does not prevent the user's own ~/.patman being created
+        with cleared_command_line_args():
+            with empty_git_repository() as tmpdir:
+                home = os.path.join(tmpdir, 'home')
+                os.makedirs(home)
+                with mock.patch.dict(os.environ, {'HOME': home}), \
+                        mock.patch.object(
+                            settings, 'CreatePatmanConfigFile') as create:
+                    with open('.patman-defaults', 'w', buffering=1) as f:
+                        f.write('[settings]\nproject: base-proj\n')
+
+                    parser, _ = _make_parser()
+                    settings.Setup(parser, 'unknown', [])
+                    args, _ = parser.parse_known_args([])
+                    self.assertEqual('base-proj', args.project)
+                    create.assert_called_once()
 
 
 if __name__ == '__main__':
