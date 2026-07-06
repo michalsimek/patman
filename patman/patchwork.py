@@ -264,14 +264,27 @@ class Patchwork:
     async def get_projects(self):
         """Get a list of projects on the server
 
+        Reads all the pages of projects, since some servers have more
+        projects than fit on one page.
+
         Returns:
             list of dict, one for each project
                 'name' (str): Project name, e.g. 'U-Boot'
                 'id' (int): Project ID, e.g. 9
                 'link_name' (str): Project's link-name, e.g. 'uboot'
         """
+        per_page = 100
+        projects = []
         async with aiohttp.ClientSession() as client:
-            return await self._request(client, 'projects/')
+            page = 1
+            while True:
+                res = await self._request(
+                    client, f'projects/?page={page}&per_page={per_page}')
+                projects += res
+                if len(res) < per_page:
+                    break
+                page += 1
+        return projects
 
     async def query_series(self, client, desc):
         """Query series by name

@@ -489,13 +489,17 @@ class TestCseries(unittest.TestCase, TestCommon):
         Args:
             subpath (str): URL subpath to use
         """
-        # Get a list of projects
-        if subpath == 'projects/':
-            return [
+        # Get a list of projects; return them one per page to check that
+        # pagination works
+        re_proj = re.match(r'projects/\?page=(\d+)&per_page=\d+$', subpath)
+        if re_proj:
+            page = int(re_proj.group(1))
+            projects = [
                 {'id': self.PROJ_ID, 'name': 'U-Boot',
                  'link_name': self.PROJ_LINK_NAME},
                 {'id': 9, 'name': 'other', 'link_name': 'other'}
             ]
+            return projects[page - 1:page]
 
         # Search for series by their cover-letter name
         re_search = re.match(r'series/\?project=(\d+)&q=.*$', subpath)
@@ -4614,7 +4618,9 @@ Date:   .*
         Args:
             subpath (str): URL subpath to use
         """
-        if subpath == 'projects/':
+        if re.match(r'projects/\?page=(\d+)&per_page=\d+$', subpath):
+            if 'page=1&' not in subpath:
+                return []
             return [
                 {'id': self.PROJ_ID, 'name': 'U-Boot',
                  'link_name': self.PROJ_LINK_NAME},
