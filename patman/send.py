@@ -6,6 +6,7 @@
 """
 
 import email
+import email.utils
 import os
 import sys
 
@@ -104,8 +105,47 @@ def _parse_cc_file(cc_file):
     return result
 
 
+def _from_domain(msg):
+    """Return the domain of a message's From address, or None"""
+    addr = email.utils.parseaddr(msg.get('From', ''))[1]
+    return addr.split('@', 1)[1] if '@' in addr else None
+
+
+def _apply_threading(msgs, thread, in_reply_to):
+    """Add In-Reply-To/References headers to thread the series
+
+    The first message (cover letter, or first patch if there is none) is
+    the root. With thread=True the remaining messages reply to it, as
+    'git send-email --thread' does (shallow threading). If in_reply_to is
+    set, the root replies to that message id.
+
+    Args:
+        msgs (list of email.message.Message): Messages in send order
+        thread (bool): True to thread the patches under the root
+        in_reply_to (str or None): Message id the series replies to
+    """
+    if not msgs:
+        return
+    root = msgs[0]
+    if in_reply_to:
+        irt = in_reply_to if in_reply_to.startswith('<') else f'<{in_reply_to}>'
+        del root['In-Reply-To']
+        del root['References']
+        root['In-Reply-To'] = irt
+        root['References'] = irt
+    if not thread:
+        return
+    root_id = root['Message-ID']
+    base_refs = root['References']
+    for msg in msgs[1:]:
+        del msg['In-Reply-To']
+        del msg['References']
+        msg['In-Reply-To'] = root_id
+        msg['References'] = f'{base_refs} {root_id}' if base_refs else root_id
+
+
 def send_via_relay(series, cover_fname, patch_files, cc_file, endpoint,
-                   reflect, dry_run, cwd=None):
+                   reflect, dry_run, thread=False, in_reply_to=None, cwd=None):
     """Send a prepared series through a web submission endpoint (relay)
 
     Builds an email for each patch (and the cover letter) with the To and
@@ -121,6 +161,9 @@ def send_via_relay(series, cover_fname, patch_files, cc_file, endpoint,
         endpoint (str): Web submission endpoint URL
         reflect (bool): True to reflect the series back to the sender only
         dry_run (bool): True to show what would be sent without posting
+        thread (bool): True to thread the patches under the cover/first
+            patch, as 'git send-email --thread' does
+        in_reply_to (str or None): Message id the series replies to
         cwd (str): Directory holding the patch files (None for current)
 
     Returns:
@@ -135,10 +178,10 @@ def send_via_relay(series, cover_fname, patch_files, cc_file, endpoint,
             "'pip install patch-manager[send-web]'")
 
     cc_map = _parse_cc_file(cc_file)
-    to_list = gitutil.build_email_list(series.get('to'), settings.alias)
+    to_list = gitutil.build_email_list(series.get('to') or [], settings.alias)
 
     fnames = ([cover_fname] if cover_fname else []) + list(patch_files)
-    messages = []
+    msgs = []
     for fname in fnames:
         path = os.path.join(cwd, fname) if cwd else fname
         with open(path, 'rb') as fd:
@@ -152,7 +195,13 @@ def send_via_relay(series, cover_fname, patch_files, cc_file, endpoint,
             msg['Cc'] = ', '.join(cc)
         if not msg['X-Mailer']:
             msg['X-Mailer'] = 'patman'
-        messages.append(relay.sign_message(msg.as_bytes()).decode())
+        if not msg['Message-ID']:
+            msg['Message-ID'] = email.utils.make_msgid(
+                domain=_from_domain(msg))
+        msgs.append(msg)
+
+    _apply_threading(msgs, thread, in_reply_to)
+    messages = [relay.sign_message(msg.as_bytes()).decode() for msg in msgs]
 
     if dry_run:
         verb = 'reflect' if reflect else 'send'
@@ -221,7 +270,8 @@ def email_patches(col, series, cover_fname, patch_files, process_tags, its_a_go,
         if endpoint:
             num_sent = send_via_relay(
                 series, cover_fname, patch_files, cc_file, endpoint,
-                reflect, dry_run, cwd)
+                reflect, dry_run, thread=thread, in_reply_to=in_reply_to,
+                cwd=cwd)
             cmd = f'(web relay {endpoint})'
         else:
             cmd, num_sent = gitutil.email_patches(

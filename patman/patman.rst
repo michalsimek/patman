@@ -247,6 +247,10 @@ Once the endpoint is configured it is used for every ``patman send`` in
 that project. To send with ``git send-email`` for one run instead, pass
 ``--no-relay``.
 
+Threading (``--thread``) and ``--in-reply-to`` work with the relay just
+as with ``git send-email``: the patches reply to the cover letter, which
+can in turn reply to an earlier message.
+
 
 How to add tags
 ---------------

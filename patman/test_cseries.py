@@ -5767,6 +5767,57 @@ VERDICT: skip"""
         self.assertEqual('patman-send-verify', inner['Subject'])
         self.assertEqual(b'verify:CHAL\n', inner.get_payload(decode=True))
 
+    def test_send_via_relay_threading(self):
+        """Test relay threading: patches reply to the cover, root to -r"""
+        from patman import send as send_mod
+        from patman import relay
+        import email as email_mod
+
+        d = self.tmpdir
+        # cover and patch 'a' have Message-Ids; patch 'b' has none (generated)
+        specs = [('0000-cover.patch', 'cover', 'Message-Id: <cover@x>\n'),
+                 ('0001-a.patch', 'a', 'Message-Id: <a@x>\n'),
+                 ('0002-b.patch', 'b', '')]
+        for name, subj, mid in specs:
+            with open(os.path.join(d, name), 'w') as fd:
+                fd.write(f'From: Me <me@example.org>\nSubject: {subj}\n'
+                         f'{mid}\nbody\n')
+        ccf = os.path.join(d, 'cc')
+        with open(ccf, 'w') as fd:
+            for name, _, _ in specs:
+                fd.write(f'{name} \n')
+        series = types.SimpleNamespace(get=lambda key, dflt=None: dflt)
+
+        sent = {}
+
+        def fake_submit(endpoint, messages, reflect=False):
+            sent['messages'] = messages
+            return len(messages)
+
+        with mock.patch.object(relay, 'check_available', return_value=True), \
+                mock.patch.object(relay, 'sign_message',
+                                  side_effect=lambda data: data), \
+                mock.patch.object(relay, 'submit', side_effect=fake_submit):
+            with terminal.capture():
+                send_mod.send_via_relay(
+                    series, '0000-cover.patch',
+                    ['0001-a.patch', '0002-b.patch'], ccf, 'https://r/x',
+                    reflect=False, dry_run=False, thread=True,
+                    in_reply_to='<prev@x>', cwd=d)
+
+        cover = email_mod.message_from_string(sent['messages'][0])
+        a = email_mod.message_from_string(sent['messages'][1])
+        b = email_mod.message_from_string(sent['messages'][2])
+        # The root replies to the --in-reply-to message
+        self.assertEqual('<prev@x>', cover['In-Reply-To'])
+        # Patches reply to the cover (shallow threading)
+        self.assertEqual('<cover@x>', a['In-Reply-To'])
+        self.assertEqual('<cover@x>', b['In-Reply-To'])
+        self.assertIn('<cover@x>', a['References'])
+        self.assertIn('<prev@x>', a['References'])
+        # The patch with no Message-Id got one generated
+        self.assertTrue(b['Message-ID'])
+
     def test_send_web_auth_requires_endpoint(self):
         """Test a web-auth action without an endpoint errors clearly"""
         from patman import send as send_mod

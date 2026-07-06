@@ -19,7 +19,8 @@ Added
   ``--reflect`` sends the series back to you only as a test.
   ``send --web-auth-new`` / ``--web-auth-verify`` register your key and
   identity with the endpoint, and ``--no-relay`` sends with git
-  send-email for one run. Needs the ``send-web`` extra (patatt).
+  send-email for one run. Threading (``--thread``) and ``--in-reply-to``
+  are honoured. Needs the ``send-web`` extra (patatt).
 
 0.1.0 - 2026-07-05
 ------------------
