@@ -482,7 +482,15 @@ def do_patman(args, test_db=None, pwork=None, cser=None):
             # If we are not processing tags, no need to warning about bad ones
             if not args.process_tags:
                 args.ignore_bad_tags = True
-            do_send(args)
+            try:
+                do_send(args)
+            except Exception as exc:  # pylint: disable=W0718
+                terminal.tprint(f'patman: {type(exc).__name__}: {exc}',
+                                colour=terminal.Color.RED)
+                if args.debug:
+                    print()
+                    traceback.print_exc()
+                return 1
         return 0
 
     ret_code = 0

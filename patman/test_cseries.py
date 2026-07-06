@@ -5679,6 +5679,26 @@ VERDICT: skip"""
         self.assertEqual(b'signed body', out)
         fake.rfc2822_sign.assert_called_once_with(b'raw body')
 
+    def test_relay_sign_no_key(self):
+        """Test a missing patatt key gives a helpful message, not a traceback"""
+        from patman import relay
+        fake = types.ModuleType('patatt')
+
+        class NoKeyError(Exception):
+            pass
+
+        fake.NoKeyError = NoKeyError
+        fake.SigningError = type('SigningError', (Exception,), {})
+
+        def rfc2822_sign(data):
+            raise NoKeyError('patatt.signingkey is not set')
+
+        fake.rfc2822_sign = rfc2822_sign
+        with mock.patch.dict('sys.modules', {'patatt': fake}):
+            with self.assertRaises(ValueError) as cm:
+                relay.sign_message(b'x')
+        self.assertIn('patatt.signingkey', str(cm.exception))
+
     def test_relay_check_available(self):
         """Test availability tracks whether patatt can be imported"""
         import builtins

@@ -34,6 +34,13 @@ from u_boot_pylib import tout
 # projects configure their own via the 'send_endpoint_web' setting
 DEFAULT_ENDPOINT = 'https://lkml.kernel.org/_b4_submit'
 
+# Shown when patatt has no signing key configured
+_NO_KEY_HELP = (
+    'No patatt signing key is configured. Set one with:\n'
+    '  git config --global patatt.signingkey openpgp:<your-key-id>\n'
+    "or create an ed25519 key with 'patatt genkey' and add the printed\n"
+    '[patatt] section to your git config.')
+
 
 def check_available():
     """Check whether patatt is importable (needed to sign messages)
@@ -61,7 +68,12 @@ def sign_message(msg_bytes):
         bytes: The message with the signature header added
     """
     import patatt  # pylint: disable=C0415
-    return patatt.rfc2822_sign(msg_bytes)
+    try:
+        return patatt.rfc2822_sign(msg_bytes)
+    except patatt.NoKeyError as exc:
+        raise ValueError(_NO_KEY_HELP) from exc
+    except patatt.SigningError as exc:
+        raise ValueError(f'patatt failed to sign the message: {exc}') from exc
 
 
 def _post(endpoint, req):
@@ -187,7 +199,10 @@ def _auth_config():
     name = _git_config('user.name')
     pconfig = patatt.get_main_config()
     selector = str(pconfig.get('selector', 'default'))
-    algo, keydata = patatt.get_algo_keydata(pconfig)
+    try:
+        algo, keydata = patatt.get_algo_keydata(pconfig)
+    except patatt.NoKeyError as exc:
+        raise ValueError(_NO_KEY_HELP) from exc
     return name, identity, selector, _derive_pubkey(algo, keydata)
 
 
