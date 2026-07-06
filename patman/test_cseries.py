@@ -5615,6 +5615,87 @@ VERDICT: skip"""
             cser.review('foo', 1)
         self.assertIn('already has', str(cm.exception))
 
+    def _relay_submit(self, response_bytes, reflect=False):
+        """Call relay.submit with urlopen mocked to return response_bytes
+
+        Returns (result, captured_request_body).
+        """
+        import json
+        from patman import relay
+
+        class Resp:
+            def read(self):
+                return response_bytes
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured['url'] = req.full_url
+            captured['body'] = json.loads(req.data)
+            return Resp()
+
+        with mock.patch('patman.relay.urllib.request.urlopen', fake_open):
+            with terminal.capture():
+                result = relay.submit('https://relay.example/submit',
+                                      ['m1', 'm2'], reflect=reflect)
+        return result, captured
+
+    def test_relay_submit(self):
+        """Test the relay submit request and success handling"""
+        n, cap = self._relay_submit(b'{"result": "success"}')
+        self.assertEqual(2, n)
+        self.assertEqual('receive', cap['body']['action'])
+        self.assertEqual(['m1', 'm2'], cap['body']['messages'])
+
+        # --reflect uses a different action
+        _, cap = self._relay_submit(b'{"result": "success"}', reflect=True)
+        self.assertEqual('reflect', cap['body']['action'])
+
+    def test_relay_submit_error(self):
+        """Test an error result from the endpoint is raised with its message"""
+        with self.assertRaises(ValueError) as cm:
+            self._relay_submit(b'{"result": "error", "message": "no key"}')
+        self.assertIn('no key', str(cm.exception))
+
+    def test_relay_submit_bad_json(self):
+        """Test a non-JSON response is reported clearly"""
+        with self.assertRaises(ValueError) as cm:
+            self._relay_submit(b'<html>nope</html>')
+        self.assertIn('Unexpected response', str(cm.exception))
+
+    def test_relay_sign_message(self):
+        """Test sign_message delegates to patatt"""
+        from patman import relay
+        fake = mock.MagicMock()
+        fake.rfc2822_sign.return_value = b'signed body'
+        with mock.patch.dict('sys.modules', {'patatt': fake}):
+            out = relay.sign_message(b'raw body')
+        self.assertEqual(b'signed body', out)
+        fake.rfc2822_sign.assert_called_once_with(b'raw body')
+
+    def test_relay_check_available(self):
+        """Test availability tracks whether patatt can be imported"""
+        import builtins
+        from patman import relay
+        with mock.patch.dict('sys.modules', {'patatt': mock.MagicMock()}):
+            self.assertTrue(relay.check_available())
+
+        orig_import = builtins.__import__
+
+        def no_patatt(name, *args, **kwargs):
+            if name == 'patatt':
+                raise ImportError('no patatt')
+            return orig_import(name, *args, **kwargs)
+
+        with mock.patch('builtins.__import__', side_effect=no_patatt):
+            self.assertFalse(relay.check_available())
+
     def test_review_guess_name(self):
         """Test guessing first name from email address"""
         from patman.review import guess_name_from_email
