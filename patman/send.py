@@ -201,13 +201,15 @@ def send_via_relay(series, cover_fname, patch_files, cc_file, endpoint,
         msgs.append(msg)
 
     _apply_threading(msgs, thread, in_reply_to)
-    messages = [relay.sign_message(msg.as_bytes()).decode() for msg in msgs]
 
     if dry_run:
         verb = 'reflect' if reflect else 'send'
-        tout.notice(f'Dry run: would {verb} {len(messages)} message(s) '
-                    f'via {endpoint}')
+        tout.notice(f'Dry run: would {verb} {len(msgs)} message(s) via '
+                    f'{endpoint}')
         return 0
+
+    # Sign only when actually sending -- signing invokes gpg/patatt
+    messages = [relay.sign_message(msg.as_bytes()).decode() for msg in msgs]
     return relay.submit(endpoint, messages, reflect=reflect)
 
 

@@ -74,7 +74,10 @@ def sign_message(msg_bytes):
     except patatt.NoKeyError as exc:
         raise ValueError(_NO_KEY_HELP) from exc
     except patatt.SigningError as exc:
-        raise ValueError(f'patatt failed to sign the message: {exc}') from exc
+        raise ValueError(
+            f'patatt failed to sign the message: {exc}. Check that the '
+            'signing key is usable non-interactively (e.g. gpg-agent is '
+            'running and the passphrase is cached or available)') from exc
 
 
 def _post(endpoint, req):
