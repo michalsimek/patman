@@ -4817,6 +4817,32 @@ Date:   .*
         result = cser.db.series_find_by_link(str(self.REVIEW_LINK_V2))
         self.assertIsNotNone(result)
 
+    def test_review_search_series_version(self):
+        """Test -V selects a specific version when searching by title"""
+        from patman import review as review_mod
+        pwork = Patchwork.for_testing(self._fake_patchwork_review)
+        pwork.project_set(self.PROJ_ID, self.PROJ_LINK_NAME)
+
+        with terminal.capture():
+            # Default picks the most recent (v2)
+            self.assertEqual(
+                str(self.REVIEW_LINK_V2),
+                review_mod.search_series(pwork, self.REVIEW_NAME))
+            # -V selects the requested version
+            self.assertEqual(
+                str(self.REVIEW_LINK),
+                review_mod.search_series(pwork, self.REVIEW_NAME, 1))
+            self.assertEqual(
+                str(self.REVIEW_LINK_V2),
+                review_mod.search_series(pwork, self.REVIEW_NAME, 2))
+
+        # An unavailable version errors, listing what is available
+        with terminal.capture():
+            with self.assertRaises(ValueError) as cm:
+                review_mod.search_series(pwork, self.REVIEW_NAME, 5)
+        self.assertIn('available', str(cm.exception))
+        self.assertIn('v1', str(cm.exception))
+
     def test_review_no_link_or_title(self):
         """Test that missing -l and -t gives a proper error"""
         self.get_cser()

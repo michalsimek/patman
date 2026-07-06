@@ -1567,21 +1567,24 @@ def lookup_patch_series(pwork, patch_id):
     return series_link, 1
 
 
-def search_series(pwork, title):
+def search_series(pwork, title, version=None):
     """Search patchwork for a series by cover-letter title
 
     Queries the patchwork API and returns the link for the best match.
-    If multiple matches are found, shows them and picks the most recent.
+    If multiple matches are found, shows them and picks the most recent,
+    unless a specific version is requested.
 
     Args:
         pwork (Patchwork): Configured patchwork instance
         title (str): Title text to search for
+        version (int or None): Specific version to select, or None for the
+            most recent
 
     Returns:
         str: Patchwork series link/ID
 
     Raises:
-        ValueError: if no matching series is found
+        ValueError: if no matching series (or version) is found
     """
     async def _query():
         if not pwork.proj_id:
@@ -1595,6 +1598,19 @@ def search_series(pwork, title):
 
     if not results:
         raise ValueError(f"No series found matching '{title}'")
+
+    if version is not None:
+        matches = [r for r in results if r.get('version') == version]
+        if not matches:
+            avail = ', '.join(
+                f"v{r.get('version')}"
+                for r in sorted(results, key=lambda r: r.get('version', 0)))
+            raise ValueError(
+                f"No v{version} of '{title}' found (available: {avail})")
+        # If several share the version, take the most recent by date
+        best = max(matches, key=lambda r: r.get('date', ''))
+        tout.notice(f"Using v{version}: {best['name']} (link {best['id']})")
+        return str(best['id'])
 
     if len(results) == 1:
         match = results[0]
@@ -2779,7 +2795,7 @@ def do_review(args, pwork, cser):
         link, patch_seq = search_patch(pwork, args.patch_title)
         args.patches = str(patch_seq)
     elif not link:
-        link = search_series(pwork, args.title)
+        link = search_series(pwork, args.title, getattr(args, 'version', None))
 
     return _review_link(args, pwork, cser, link)
 

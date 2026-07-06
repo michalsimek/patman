@@ -579,6 +579,10 @@ def add_review_subparser(subparsers):
         '-S', '--series-title', type=str, dest='title',
         help='Search for a series by cover-letter title')
     review.add_argument(
+        '-V', '--version', type=int, default=None,
+        help='Series version to review when searching by title (-S); '
+             'defaults to the most recent')
+    review.add_argument(
         '-p', '--patch', type=int,
         help='Patchwork patch ID (finds the series and reviews just '
         'that patch)')

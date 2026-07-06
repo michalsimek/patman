@@ -8,6 +8,11 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
+Added
+~~~~~
+- ``review -V`` selects which version of a series to review when
+  searching by title (``-S``); it defaults to the most recent.
+
 0.1.0 - 2026-07-05
 ------------------
 
