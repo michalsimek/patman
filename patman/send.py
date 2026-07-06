@@ -5,14 +5,17 @@
 """Handles the 'send' subcommand
 """
 
+import email
 import os
 import sys
 
 from patman import checkpatch
 from patman import patchstream
+from patman import relay
 from patman import settings
 from u_boot_pylib import gitutil
 from u_boot_pylib import terminal
+from u_boot_pylib import tout
 
 
 def check_patches(series, patch_files, run_checkpatch, verbose, use_tree, cwd):
@@ -45,10 +48,91 @@ def check_patches(series, patch_files, run_checkpatch, verbose, use_tree, cwd):
     return ok
 
 
+def _parse_cc_file(cc_file):
+    """Parse the Cc file written by Series.MakeCcFile()
+
+    Each line is '<filename> <cc1>\\0<cc2>...' -- the filename, a space,
+    then the Cc addresses joined by NUL (so addresses may contain spaces).
+
+    Args:
+        cc_file (str): Path to the Cc file
+
+    Returns:
+        dict: filename -> list of Cc addresses
+    """
+    result = {}
+    with open(cc_file, encoding='utf-8') as fd:
+        for line in fd:
+            line = line.rstrip('\n')
+            if not line:
+                continue
+            fname, _, rest = line.partition(' ')
+            result[fname] = [cc for cc in rest.split('\0') if cc]
+    return result
+
+
+def send_via_relay(series, cover_fname, patch_files, cc_file, endpoint,
+                   reflect, dry_run, cwd=None):
+    """Send a prepared series through a web submission endpoint (relay)
+
+    Builds an email for each patch (and the cover letter) with the To and
+    Cc from the computed recipients, attests each with patatt and posts
+    them to the web endpoint. Used instead of 'git send-email' when a
+    send endpoint is configured.
+
+    Args:
+        series (Series): Series object for this series
+        cover_fname (str or None): Cover-letter filename
+        patch_files (list of str): Patch filenames
+        cc_file (str): Cc file written by Series.MakeCcFile()
+        endpoint (str): Web submission endpoint URL
+        reflect (bool): True to reflect the series back to the sender only
+        dry_run (bool): True to show what would be sent without posting
+        cwd (str): Directory holding the patch files (None for current)
+
+    Returns:
+        int: Number of messages sent (0 for a dry run)
+
+    Raises:
+        ValueError: if patatt is not available or the endpoint errors
+    """
+    if not relay.check_available():
+        raise ValueError(
+            'patatt is required to send via a web relay; install it with '
+            "'pip install patch-manager[send-web]'")
+
+    cc_map = _parse_cc_file(cc_file)
+    to_list = gitutil.build_email_list(series.get('to'), settings.alias)
+
+    fnames = ([cover_fname] if cover_fname else []) + list(patch_files)
+    messages = []
+    for fname in fnames:
+        path = os.path.join(cwd, fname) if cwd else fname
+        with open(path, 'rb') as fd:
+            msg = email.message_from_bytes(fd.read())
+        del msg['To']
+        del msg['Cc']
+        if to_list:
+            msg['To'] = ', '.join(to_list)
+        cc = cc_map.get(fname)
+        if cc:
+            msg['Cc'] = ', '.join(cc)
+        if not msg['X-Mailer']:
+            msg['X-Mailer'] = 'patman'
+        messages.append(relay.sign_message(msg.as_bytes()).decode())
+
+    if dry_run:
+        verb = 'reflect' if reflect else 'send'
+        tout.notice(f'Dry run: would {verb} {len(messages)} message(s) '
+                    f'via {endpoint}')
+        return 0
+    return relay.submit(endpoint, messages, reflect=reflect)
+
+
 def email_patches(col, series, cover_fname, patch_files, process_tags, its_a_go,
                   ignore_bad_tags, add_maintainers, get_maintainer_script, limit,
                   dry_run, in_reply_to, thread, smtp_server, identity=None,
-                  cwd=None):
+                  cwd=None, endpoint=None, reflect=False):
     """Email patches to the recipients
 
     This emails out the patches and cover letter using 'git send-email'. Each
@@ -101,11 +185,17 @@ def email_patches(col, series, cover_fname, patch_files, process_tags, its_a_go,
     cmd = ''
     num_sent = 0
     if its_a_go:
-        cmd, num_sent = gitutil.email_patches(
-            series, cover_fname, patch_files, dry_run, not ignore_bad_tags,
-            cc_file, alias=settings.alias, in_reply_to=in_reply_to,
-            thread=thread, smtp_server=smtp_server, identity=identity,
-            cwd=cwd)
+        if endpoint:
+            num_sent = send_via_relay(
+                series, cover_fname, patch_files, cc_file, endpoint,
+                reflect, dry_run, cwd)
+            cmd = f'(web relay {endpoint})'
+        else:
+            cmd, num_sent = gitutil.email_patches(
+                series, cover_fname, patch_files, dry_run, not ignore_bad_tags,
+                cc_file, alias=settings.alias, in_reply_to=in_reply_to,
+                thread=thread, smtp_server=smtp_server, identity=identity,
+                cwd=cwd)
     else:
         print(col.build(col.RED, "Not sending emails due to errors/warnings"))
 
@@ -212,6 +302,8 @@ def send(args, git_dir=None, cwd=None):
         its_a_go, args.ignore_bad_tags, args.add_maintainers,
         args.get_maintainer_script, args.limit, args.dry_run,
         args.in_reply_to, args.thread, args.smtp_server,
-        identity=identity, cwd=cwd)
+        identity=identity, cwd=cwd,
+        endpoint=getattr(args, 'send_endpoint_web', None),
+        reflect=getattr(args, 'reflect', False))
 
     return num_sent > 0

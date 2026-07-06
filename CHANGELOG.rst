@@ -12,6 +12,12 @@ Added
 ~~~~~
 - ``review -V`` selects which version of a series to review when
   searching by title (``-S``); it defaults to the most recent.
+- ``send`` can post a series to a web submission endpoint (a relay, as
+  b4 uses) instead of ``git send-email``, for contributors without
+  working outbound SMTP. Set ``send_endpoint_web`` (or
+  ``--send-endpoint-web``); each message is attested with patatt, and
+  ``--reflect`` sends the series back to you only as a test. Needs the
+  ``send-web`` extra (patatt).
 
 0.1.0 - 2026-07-05
 ------------------

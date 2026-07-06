@@ -209,6 +209,34 @@ Similar to the above, but skip the first commit and take the next 5. This
 is useful if your top commit is for setting up testing.
 
 
+Sending through a web relay
+---------------------------
+
+If you have no working outbound email (SMTP blocked, or a provider that
+mangles patches), patman can post the series to a web submission
+endpoint that sends the mail for you, instead of using ``git
+send-email``. This is the same mechanism b4 uses.
+
+Set the endpoint (kernel.org runs one for kernel.org-hosted projects)::
+
+    [settings]
+    send_endpoint_web: https://lkml.kernel.org/_b4_submit
+
+or pass ``--send-endpoint-web <url>`` for one run. With it set, ``patman
+send`` builds an email per patch (with the usual To/Cc), signs each with
+patatt and posts them to the endpoint.
+
+This needs the ``patatt`` tool (``pip install patch-manager[send-web]``)
+and a signing key it can use -- either ``git config user.signingKey``
+(PGP) or a key from ``patatt genkey``. The endpoint authenticates a
+submission by that signature, so register your key/identity with the
+endpoint first (for the kernel.org endpoint, ``b4 send --web-auth-new``
+does this).
+
+Use ``--reflect`` to have the endpoint send the series back to you only,
+as a safe test before the real thing.
+
+
 How to add tags
 ---------------
 

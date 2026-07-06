@@ -5696,6 +5696,78 @@ VERDICT: skip"""
         with mock.patch('builtins.__import__', side_effect=no_patatt):
             self.assertFalse(relay.check_available())
 
+    def test_send_parse_cc_file(self):
+        """Test parsing the MakeCcFile output, incl. names with spaces"""
+        from patman import send as send_mod
+        path = os.path.join(self.tmpdir, 'cc')
+        with open(path, 'w', encoding='utf-8') as fd:
+            # '<fname> <cc1>\0<cc2>' -- cc addresses may contain spaces
+            fd.write('0001-a.patch a@x\0Bob B <bob@x>\n')
+            fd.write('0002-b.patch \n')  # no Cc
+        cc_map = send_mod._parse_cc_file(path)
+        self.assertEqual(['a@x', 'Bob B <bob@x>'], cc_map['0001-a.patch'])
+        self.assertEqual([], cc_map['0002-b.patch'])
+
+    def test_send_via_relay(self):
+        """Test the relay send builds signed messages with To/Cc and posts"""
+        from patman import send as send_mod
+        from patman import relay
+        import email as email_mod
+
+        d = self.tmpdir
+        with open(os.path.join(d, '0000-cover.patch'), 'w') as fd:
+            fd.write('From: Me <me@x>\nSubject: cover\n'
+                     'Message-Id: <0@x>\n\ncover body\n')
+        with open(os.path.join(d, '0001-first.patch'), 'w') as fd:
+            fd.write('From: Me <me@x>\nSubject: first\n'
+                     'Message-Id: <1@x>\n\npatch body\n')
+        ccf = os.path.join(d, 'cc')
+        with open(ccf, 'w') as fd:
+            fd.write('0000-cover.patch a@x\0Bob B <bob@x>\n')
+            fd.write('0001-first.patch b@x\n')
+
+        series = types.SimpleNamespace(
+            get=lambda key, dflt=None: ['to@list'] if key == 'to' else dflt)
+
+        sent = {}
+
+        def fake_submit(endpoint, messages, reflect=False):
+            sent.update(endpoint=endpoint, messages=messages, reflect=reflect)
+            return len(messages)
+
+        with mock.patch.object(relay, 'check_available', return_value=True), \
+                mock.patch.object(relay, 'sign_message',
+                                  side_effect=lambda data: data), \
+                mock.patch.object(relay, 'submit', side_effect=fake_submit):
+            with terminal.capture():
+                n = send_mod.send_via_relay(
+                    series, '0000-cover.patch', ['0001-first.patch'], ccf,
+                    'https://relay/x', reflect=False, dry_run=False, cwd=d)
+
+        self.assertEqual(2, n)
+        self.assertEqual('https://relay/x', sent['endpoint'])
+        cover = email_mod.message_from_string(sent['messages'][0])
+        self.assertEqual('to@list', cover['To'])
+        self.assertIn('a@x', cover['Cc'])
+        self.assertIn('Bob B <bob@x>', cover['Cc'])
+        patch = email_mod.message_from_string(sent['messages'][1])
+        self.assertEqual('b@x', patch['Cc'])
+        self.assertEqual('patman', patch['X-Mailer'])
+
+        # Dry run posts nothing
+        sent.clear()
+        with mock.patch.object(relay, 'check_available', return_value=True), \
+                mock.patch.object(relay, 'sign_message',
+                                  side_effect=lambda data: data), \
+                mock.patch.object(relay, 'submit',
+                                  side_effect=fake_submit) as mock_submit:
+            with terminal.capture():
+                n = send_mod.send_via_relay(
+                    series, None, ['0001-first.patch'], ccf,
+                    'https://relay/x', reflect=True, dry_run=True, cwd=d)
+        self.assertEqual(0, n)
+        mock_submit.assert_not_called()
+
     def test_review_guess_name(self):
         """Test guessing first name from email address"""
         from patman.review import guess_name_from_email

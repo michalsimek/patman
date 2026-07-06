@@ -129,6 +129,16 @@ def add_send_args(par):
         '--smtp-server', type=str,
         help="Specify the SMTP server to 'git send-email'")
     par.add_argument(
+        '--send-endpoint-web', dest='send_endpoint_web', type=str,
+        default=None,
+        help='Web submission endpoint to relay patches through instead of '
+             "git send-email (needs patatt; can be set as 'send_endpoint_web' "
+             'in .patman)')
+    par.add_argument(
+        '--reflect', action='store_true',
+        help='With a web relay, reflect the series back to yourself only '
+             '(a safe test) instead of sending it')
+    par.add_argument(
         '--keep-change-id', action='store_true',
         help='Preserve Change-Id tags in patches to send.')
 
