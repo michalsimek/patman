@@ -1292,6 +1292,12 @@ Or search by cover-letter title::
     patman review -S 'boot/bootm: Disable interrupts' -U us \
         --reviewer 'Your Name <your@email>'
 
+A title search reviews the most recent version by default. Use ``-V``
+to review a specific version::
+
+    patman review -S 'boot/bootm: Disable interrupts' -V 2 -U us \
+        --reviewer 'Your Name <your@email>'
+
 To review a single patch by its Patchwork patch ID (the series is
 found automatically)::
 
