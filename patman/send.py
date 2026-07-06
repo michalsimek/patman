@@ -48,6 +48,20 @@ def check_patches(series, patch_files, run_checkpatch, verbose, use_tree, cwd):
     return ok
 
 
+def _send_endpoint(args):
+    """Return the web endpoint to send through, honouring --no-relay
+
+    Args:
+        args (argparse.Namespace): Command-line arguments
+
+    Returns:
+        str or None: The endpoint URL, or None to use git send-email
+    """
+    if getattr(args, 'no_relay', False):
+        return None
+    return getattr(args, 'send_endpoint_web', None)
+
+
 def _require_endpoint(endpoint):
     """Return the endpoint, or raise if none is configured
 
@@ -333,7 +347,7 @@ def send(args, git_dir=None, cwd=None):
         args.get_maintainer_script, args.limit, args.dry_run,
         args.in_reply_to, args.thread, args.smtp_server,
         identity=identity, cwd=cwd,
-        endpoint=getattr(args, 'send_endpoint_web', None),
+        endpoint=_send_endpoint(args),
         reflect=getattr(args, 'reflect', False))
 
     return num_sent > 0

@@ -243,6 +243,10 @@ The endpoint emails you a challenge; complete the registration with::
 Use ``--reflect`` to have the endpoint send the series back to you only,
 as a safe test before the real thing.
 
+Once the endpoint is configured it is used for every ``patman send`` in
+that project. To send with ``git send-email`` for one run instead, pass
+``--no-relay``.
+
 
 How to add tags
 ---------------

@@ -139,6 +139,10 @@ def add_send_args(par):
         help='With a web relay, reflect the series back to yourself only '
              '(a safe test) instead of sending it')
     par.add_argument(
+        '--no-relay', action='store_true', dest='no_relay', default=False,
+        help='Send with git send-email even if a web relay '
+             '(send_endpoint_web) is configured')
+    par.add_argument(
         '--web-auth-new', action='store_true',
         help='Register your identity and signing key with the web endpoint '
              '(one-time), then exit')

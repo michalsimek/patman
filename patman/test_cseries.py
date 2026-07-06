@@ -5776,6 +5776,18 @@ VERDICT: skip"""
             send_mod.send(args)
         self.assertIn('No web endpoint', str(cm.exception))
 
+    def test_send_endpoint_no_relay(self):
+        """Test --no-relay forces git send-email over a configured relay"""
+        from patman import send as send_mod
+        args = types.SimpleNamespace(send_endpoint_web='https://relay/x',
+                                     no_relay=False)
+        self.assertEqual('https://relay/x', send_mod._send_endpoint(args))
+        args.no_relay = True
+        self.assertIsNone(send_mod._send_endpoint(args))
+        # No relay configured -> None regardless
+        args = types.SimpleNamespace(send_endpoint_web=None, no_relay=False)
+        self.assertIsNone(send_mod._send_endpoint(args))
+
     def test_send_parse_cc_file(self):
         """Test parsing the MakeCcFile output, incl. names with spaces"""
         from patman import send as send_mod
