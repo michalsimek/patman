@@ -5696,6 +5696,86 @@ VERDICT: skip"""
         with mock.patch('builtins.__import__', side_effect=no_patatt):
             self.assertFalse(relay.check_available())
 
+    def test_relay_auth_new(self):
+        """Test auth_new posts the registration request"""
+        import json
+        from patman import relay
+
+        class Resp:
+            def read(self):
+                return b'{"result": "success"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured['body'] = json.loads(req.data)
+            return Resp()
+
+        with mock.patch.object(relay, '_auth_config',
+                               return_value=('Me', 'me@x', 'sel', 'PUBKEY')), \
+                mock.patch('patman.relay.urllib.request.urlopen', fake_open):
+            with terminal.capture():
+                relay.auth_new('https://relay/x')
+        body = captured['body']
+        self.assertEqual('auth-new', body['action'])
+        self.assertEqual('Me', body['name'])
+        self.assertEqual('me@x', body['identity'])
+        self.assertEqual('sel', body['selector'])
+        self.assertEqual('PUBKEY', body['pubkey'])
+
+    def test_relay_auth_verify(self):
+        """Test auth_verify signs the challenge and posts it"""
+        import email as email_mod
+        import json
+        from patman import relay
+
+        class Resp:
+            def read(self):
+                return b'{"result": "success"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        captured = {}
+
+        def fake_open(req, timeout=None):
+            captured['body'] = json.loads(req.data)
+            return Resp()
+
+        with mock.patch.object(relay, '_auth_config',
+                               return_value=('Me', 'me@x', 'sel', 'PUB')), \
+                mock.patch.object(relay, 'sign_message',
+                                  side_effect=lambda data: b'SIGNED:' + data), \
+                mock.patch('patman.relay.urllib.request.urlopen', fake_open):
+            with terminal.capture():
+                relay.auth_verify('https://relay/x', 'CHAL')
+        body = captured['body']
+        self.assertEqual('auth-verify', body['action'])
+        self.assertTrue(body['msg'].startswith('SIGNED:'))
+        # The signed message is a MIME message carrying the challenge
+        inner = email_mod.message_from_string(body['msg'][len('SIGNED:'):])
+        self.assertEqual('me@x', inner['From'])
+        self.assertEqual('patman-send-verify', inner['Subject'])
+        self.assertEqual(b'verify:CHAL\n', inner.get_payload(decode=True))
+
+    def test_send_web_auth_requires_endpoint(self):
+        """Test a web-auth action without an endpoint errors clearly"""
+        from patman import send as send_mod
+        args = types.SimpleNamespace(send_endpoint_web=None,
+                                     web_auth_new=True, web_auth_verify=None)
+        with self.assertRaises(ValueError) as cm:
+            send_mod.send(args)
+        self.assertIn('No web endpoint', str(cm.exception))
+
     def test_send_parse_cc_file(self):
         """Test parsing the MakeCcFile output, incl. names with spaces"""
         from patman import send as send_mod

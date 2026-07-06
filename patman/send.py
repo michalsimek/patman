@@ -48,6 +48,25 @@ def check_patches(series, patch_files, run_checkpatch, verbose, use_tree, cwd):
     return ok
 
 
+def _require_endpoint(endpoint):
+    """Return the endpoint, or raise if none is configured
+
+    Args:
+        endpoint (str or None): The configured web submission endpoint
+
+    Returns:
+        str: The endpoint URL
+
+    Raises:
+        ValueError: if no endpoint is set
+    """
+    if not endpoint:
+        raise ValueError(
+            'No web endpoint set; use --send-endpoint-web or set '
+            'send_endpoint_web in .patman')
+    return endpoint
+
+
 def _parse_cc_file(cc_file):
     """Parse the Cc file written by Series.MakeCcFile()
 
@@ -272,6 +291,17 @@ def send(args, git_dir=None, cwd=None):
         bool: True if the patches were likely sent, else False
     """
     col = terminal.Color()
+
+    # Web-endpoint registration is a standalone action; it does not
+    # prepare or send any patches
+    endpoint = getattr(args, 'send_endpoint_web', None)
+    if getattr(args, 'web_auth_new', False):
+        relay.auth_new(_require_endpoint(endpoint))
+        return True
+    if getattr(args, 'web_auth_verify', None):
+        relay.auth_verify(_require_endpoint(endpoint), args.web_auth_verify)
+        return True
+
     series, cover_fname, patch_files = prepare_patches(
         col, args.branch, args.count, args.start, args.end,
         args.ignore_binary, args.add_signoff,

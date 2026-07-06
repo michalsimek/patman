@@ -228,10 +228,17 @@ patatt and posts them to the endpoint.
 
 This needs the ``patatt`` tool (``pip install patch-manager[send-web]``)
 and a signing key it can use -- either ``git config user.signingKey``
-(PGP) or a key from ``patatt genkey``. The endpoint authenticates a
-submission by that signature, so register your key/identity with the
-endpoint first (for the kernel.org endpoint, ``b4 send --web-auth-new``
-does this).
+(PGP) or a key from ``patatt genkey``.
+
+The endpoint authenticates a submission by its signature, so register
+your key and identity with it once::
+
+    patman send --send-endpoint-web https://lkml.kernel.org/_b4_submit \
+        --web-auth-new
+
+The endpoint emails you a challenge; complete the registration with::
+
+    patman send --web-auth-verify <challenge>
 
 Use ``--reflect`` to have the endpoint send the series back to you only,
 as a safe test before the real thing.

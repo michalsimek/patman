@@ -22,7 +22,9 @@ src/b4/__init__.py)::
     -> {"result": "success"} | {"result": "error", "message": ...}
 """
 
+import email.utils
 import json
+import subprocess
 import urllib.error
 import urllib.request
 
@@ -62,6 +64,46 @@ def sign_message(msg_bytes):
     return patatt.rfc2822_sign(msg_bytes)
 
 
+def _post(endpoint, req):
+    """POST a JSON request to the endpoint and return the parsed response
+
+    Args:
+        endpoint (str): Endpoint URL
+        req (dict): Request body to send as JSON
+
+    Returns:
+        dict: The decoded JSON response
+
+    Raises:
+        ValueError: if the endpoint is unreachable, returns a non-JSON
+            response, or reports a result other than 'success'
+    """
+    body = json.dumps(req).encode()
+    http_req = urllib.request.Request(
+        endpoint, data=body, method='POST',
+        headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(http_req, timeout=30) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors='replace')
+        raise ValueError(f'Endpoint HTTP {exc.code}: {detail}') from exc
+    except urllib.error.URLError as exc:
+        raise ValueError(
+            f'Cannot reach endpoint {endpoint}: {exc.reason}') from exc
+
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f'Unexpected response from {endpoint}: '
+            f'{raw.decode(errors="replace")}') from exc
+
+    if data.get('result') != 'success':
+        raise ValueError(f"Endpoint error: {data.get('message', data)}")
+    return data
+
+
 def submit(endpoint, messages, reflect=False):
     """Submit already-signed messages to a web relay
 
@@ -76,34 +118,130 @@ def submit(endpoint, messages, reflect=False):
         int: Number of messages the endpoint accepted
 
     Raises:
-        ValueError: if the endpoint is unreachable, returns a non-JSON
-            response, or reports an error
+        ValueError: if the endpoint is unreachable or reports an error
     """
     action = 'reflect' if reflect else 'receive'
-    body = json.dumps({'action': action, 'messages': list(messages)}).encode()
     tout.info(f"{'Reflecting' if reflect else 'Sending'} {len(messages)} "
               f'message(s) via {endpoint}')
-    req = urllib.request.Request(
-        endpoint, data=body, method='POST',
-        headers={'Content-Type': 'application/json'})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            raw = resp.read()
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode(errors='replace')
-        raise ValueError(
-            f'Relay endpoint HTTP {exc.code}: {detail}') from exc
-    except urllib.error.URLError as exc:
-        raise ValueError(
-            f'Cannot reach relay endpoint {endpoint}: {exc.reason}') from exc
+    _post(endpoint, {'action': action, 'messages': list(messages)})
+    return len(messages)
 
-    try:
-        data = json.loads(raw)
-    except ValueError as exc:
-        raise ValueError(
-            f'Unexpected response from {endpoint}: '
-            f'{raw.decode(errors="replace")}') from exc
 
-    if data.get('result') == 'success':
-        return len(messages)
-    raise ValueError(f"Relay endpoint error: {data.get('message', data)}")
+def _git_config(key):
+    """Read a git config value, returning '' if it is unset"""
+    result = subprocess.run(['git', 'config', key], check=False,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            text=True)
+    return result.stdout.strip()
+
+
+def _derive_pubkey(algo, keydata):
+    """Derive the public key to register from the patatt signing key
+
+    Args:
+        algo (str): patatt algorithm, 'openpgp' or 'ed25519'
+        keydata (str): The signing key data from patatt's config
+
+    Returns:
+        str: The public key (armoured PGP, or base64 ed25519)
+
+    Raises:
+        ValueError: if the algorithm is unsupported or export fails
+    """
+    if algo == 'openpgp':
+        result = subprocess.run(
+            ['gpg', '--export', '--export-options', 'export-minimal', '-a',
+             keydata],
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode or not result.stdout:
+            raise ValueError(f'Unable to export PGP public key for {keydata}')
+        return result.stdout.decode()
+    if algo == 'ed25519':
+        import base64
+        from nacl.encoding import Base64Encoder
+        from nacl.signing import SigningKey
+        skey = SigningKey(keydata.encode(), encoder=Base64Encoder)
+        return base64.b64encode(skey.verify_key.encode()).decode()
+    raise ValueError(
+        f"Unsupported patatt algorithm '{algo}' for web submission")
+
+
+def _auth_config():
+    """Gather the identity and key info needed to register with an endpoint
+
+    Returns:
+        tuple: (name, identity, selector, pubkey) where identity is the
+            email address
+
+    Raises:
+        ValueError: if patatt is unavailable, or no email/key is configured
+    """
+    if not check_available():
+        raise ValueError(
+            'patatt is required for web-endpoint registration; install it '
+            "with 'pip install patch-manager[send-web]'")
+    import patatt
+    identity = _git_config('user.email')
+    if not identity:
+        raise ValueError('No email configured; set git user.email')
+    name = _git_config('user.name')
+    pconfig = patatt.get_main_config()
+    selector = str(pconfig.get('selector', 'default'))
+    algo, keydata = patatt.get_algo_keydata(pconfig)
+    return name, identity, selector, _derive_pubkey(algo, keydata)
+
+
+def auth_new(endpoint):
+    """Start endpoint registration: request an emailed challenge
+
+    Sends your name, identity and public key to the endpoint, which
+    replies by emailing a challenge to your address. Complete it with
+    auth_verify().
+
+    Args:
+        endpoint (str): Web submission endpoint URL
+
+    Raises:
+        ValueError: on a configuration or endpoint error
+    """
+    name, identity, selector, pubkey = _auth_config()
+    tout.notice(f'Requesting email authorisation from {endpoint}')
+    tout.notice(f'  Name:     {name}')
+    tout.notice(f'  Identity: {identity}')
+    tout.notice(f'  Selector: {selector}')
+    _post(endpoint, {
+        'action': 'auth-new',
+        'name': name,
+        'identity': identity,
+        'selector': selector,
+        'pubkey': pubkey,
+    })
+    tout.notice(f'Challenge sent to {identity}. When it arrives, run:')
+    tout.notice('  patman send --web-auth-verify <challenge>')
+
+
+def auth_verify(endpoint, challenge):
+    """Complete registration by signing and returning the challenge
+
+    Builds a minimal message containing the challenge, signs it with
+    patatt and posts it to the endpoint, proving control of both the From
+    address and the key.
+
+    Args:
+        endpoint (str): Web submission endpoint URL
+        challenge (str): The challenge string from the endpoint's email
+
+    Raises:
+        ValueError: on a configuration or endpoint error
+    """
+    from email.message import EmailMessage
+    _, identity, _, _ = _auth_config()
+    msg = EmailMessage()
+    msg['From'] = identity
+    msg['Subject'] = 'patman-send-verify'
+    msg['Message-ID'] = email.utils.make_msgid()
+    msg.set_payload(f'verify:{challenge}\n', charset='utf-8')
+    signed = sign_message(msg.as_bytes()).decode()
+    _post(endpoint, {'action': 'auth-verify', 'msg': signed})
+    tout.notice(f'Challenge verified for {identity}; the endpoint is ready '
+                'for sending.')

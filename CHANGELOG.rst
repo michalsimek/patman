@@ -16,8 +16,9 @@ Added
   b4 uses) instead of ``git send-email``, for contributors without
   working outbound SMTP. Set ``send_endpoint_web`` (or
   ``--send-endpoint-web``); each message is attested with patatt, and
-  ``--reflect`` sends the series back to you only as a test. Needs the
-  ``send-web`` extra (patatt).
+  ``--reflect`` sends the series back to you only as a test.
+  ``send --web-auth-new`` / ``--web-auth-verify`` register your key and
+  identity with the endpoint. Needs the ``send-web`` extra (patatt).
 
 0.1.0 - 2026-07-05
 ------------------

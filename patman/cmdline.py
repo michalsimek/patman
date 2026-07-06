@@ -139,6 +139,14 @@ def add_send_args(par):
         help='With a web relay, reflect the series back to yourself only '
              '(a safe test) instead of sending it')
     par.add_argument(
+        '--web-auth-new', action='store_true',
+        help='Register your identity and signing key with the web endpoint '
+             '(one-time), then exit')
+    par.add_argument(
+        '--web-auth-verify', type=str, default=None, metavar='CHALLENGE',
+        help='Complete web-endpoint registration using the emailed '
+             'challenge, then exit')
+    par.add_argument(
         '--keep-change-id', action='store_true',
         help='Preserve Change-Id tags in patches to send.')
 
