@@ -5784,7 +5784,7 @@ VERDICT: skip"""
         # The signed message is a MIME message carrying the challenge
         inner = email_mod.message_from_string(body['msg'][len('SIGNED:'):])
         self.assertEqual('me@x', inner['From'])
-        self.assertEqual('patman-send-verify', inner['Subject'])
+        self.assertEqual('b4-send-verify', inner['Subject'])
         self.assertEqual(b'verify:CHAL\n', inner.get_payload(decode=True))
 
     def test_send_via_relay_threading(self):

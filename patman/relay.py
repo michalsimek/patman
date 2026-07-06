@@ -22,6 +22,7 @@ src/b4/__init__.py)::
     -> {"result": "success"} | {"result": "error", "message": ...}
 """
 
+import email.policy
 import email.utils
 import json
 import subprocess
@@ -251,12 +252,20 @@ def auth_verify(endpoint, challenge):
     """
     from email.message import EmailMessage
     _, identity, _, _ = _auth_config()
+    # The endpoint requires this exact message shape: a 'b4-send-verify'
+    # subject and an 8-bit 'verify:<challenge>' body, serialised the same
+    # way b4 does (utf8, 8-bit, no line wrapping)
     msg = EmailMessage()
     msg['From'] = identity
-    msg['Subject'] = 'patman-send-verify'
-    msg['Message-ID'] = email.utils.make_msgid()
-    msg.set_payload(f'verify:{challenge}\n', charset='utf-8')
-    signed = sign_message(msg.as_bytes()).decode()
+    msg['Subject'] = 'b4-send-verify'
+    msg['Message-ID'] = email.utils.make_msgid(domain='b4')
+    # Use set_content() so the body is a well-formed text/plain part;
+    # set_charset()/set_payload() can produce a base64 header with a
+    # plaintext body on some Python versions, which the endpoint rejects
+    msg.set_content(f'verify:{challenge}\n')
+    policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit',
+                                      max_line_length=None)
+    signed = sign_message(msg.as_bytes(policy=policy)).decode()
     _post(endpoint, {'action': 'auth-verify', 'msg': signed})
     tout.notice(f'Challenge verified for {identity}; the endpoint is ready '
                 'for sending.')
