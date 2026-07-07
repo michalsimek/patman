@@ -225,7 +225,13 @@ Quick start
 
        pip install patch-manager[send-web]
 
-2. Give patatt a signing key. For an existing PGP key::
+2. Give patatt a signing key. For an existing PGP key, find its id
+   with::
+
+       gpg --list-secret-keys --keyid-format=long
+
+   and use the id shown after the algorithm (the ``<key-id>`` part of
+   ``rsa4096/<key-id>``, or the full fingerprint on the line below)::
 
        git config --global patatt.signingkey openpgp:<your-key-id>
 
