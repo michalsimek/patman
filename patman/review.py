@@ -2787,13 +2787,18 @@ def do_review(args, pwork, cser):
         raise ValueError("Please provide -s <series>, -S <title>, "
             "-p <patch-id> or -P <patch-title>")
 
+    # -p/-P locate the series via one of its patches. By default the review
+    # is then restricted to just that patch; -w reviews the whole series
+    whole = getattr(args, 'whole_series', False)
     link = args.pw_link
     if not link and has_patch:
         link, patch_seq = lookup_patch_series(pwork, args.patch)
-        args.patches = str(patch_seq)
+        if not whole:
+            args.patches = str(patch_seq)
     elif not link and has_patch_title:
         link, patch_seq = search_patch(pwork, args.patch_title)
-        args.patches = str(patch_seq)
+        if not whole:
+            args.patches = str(patch_seq)
     elif not link:
         link = search_series(pwork, args.title, getattr(args, 'version', None))
 

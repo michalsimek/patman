@@ -10,6 +10,9 @@ Unreleased
 
 Added
 ~~~~~
+- ``review -w`` / ``--whole-series`` reviews the whole series when you
+  locate it with ``-p`` / ``-P``, instead of just the one patch. Useful
+  when you know a patch but not the cover letter.
 - ``review -V`` selects which version of a series to review when
   searching by title (``-S``); it defaults to the most recent.
 - ``send`` can post a series to a web submission endpoint (a relay, as

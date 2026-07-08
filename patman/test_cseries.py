@@ -4849,6 +4849,30 @@ Date:   .*
         self.assertIn('available', str(cm.exception))
         self.assertIn('v1', str(cm.exception))
 
+    def test_review_patch_title_whole_series(self):
+        """Test -P restricts to the found patch unless -w reviews it all"""
+        def make_args(whole):
+            return Namespace(
+                learn_voice=False, sync=False, relink=False, scan=False,
+                pw_link=None, title=None, patch=None,
+                patch_title='some subject', patches=None, whole_series=whole)
+
+        # search_patch locates the series (link) and the patch's position
+        with mock.patch.object(review, 'search_patch',
+                               return_value=('link-xyz', 3)), \
+                mock.patch.object(review, '_review_link') as rev_link:
+            # Default: review just the located patch (index 3)
+            args = make_args(False)
+            review.do_review(args, None, None)
+            self.assertEqual('3', args.patches)
+            rev_link.assert_called_once_with(args, None, None, 'link-xyz')
+
+            # -w: locate via the patch but review the whole series
+            args = make_args(True)
+            review.do_review(args, None, None)
+            self.assertIsNone(args.patches)
+            rev_link.assert_called_with(args, None, None, 'link-xyz')
+
     def test_review_no_link_or_title(self):
         """Test that missing -l and -t gives a proper error"""
         self.get_cser()

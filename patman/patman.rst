@@ -1379,6 +1379,12 @@ Or search for a patch by title::
 
     patman review -P 'Add SPL support for Qualcomm'
 
+Both ``-p`` and ``-P`` review just the patch found. When you know a
+patch but not the cover letter, add ``-w`` to review the whole series
+it belongs to instead::
+
+    patman review -P 'Add SPL support for Qualcomm' -w
+
 To review only specific patches by index within the series::
 
     patman review -s 497923 -i 1,3,5

@@ -607,11 +607,15 @@ def add_review_subparser(subparsers):
     review.add_argument(
         '-p', '--patch', type=int,
         help='Patchwork patch ID (finds the series and reviews just '
-        'that patch)')
+        'that patch, or the whole series with -w)')
     review.add_argument(
         '-P', '--patch-title', type=str,
         help='Search for a patch by title (finds its series and reviews '
-        'just that patch)')
+        'just that patch, or the whole series with -w)')
+    review.add_argument(
+        '-w', '--whole-series', action='store_true',
+        help='With -p/-P, review the whole series the patch belongs to, '
+        'rather than just that patch')
     review.add_argument(
         '-i', '--index', type=str, dest='patches',
         help='Review only specific patches by index (e.g. 3 or 1,3,5 '
