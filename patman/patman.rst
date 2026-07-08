@@ -209,6 +209,78 @@ Similar to the above, but skip the first commit and take the next 5. This
 is useful if your top commit is for setting up testing.
 
 
+Sending through a web relay
+---------------------------
+
+If you have no working outbound email (SMTP blocked, or a provider that
+mangles patches), patman can post the series to a web submission
+endpoint that sends the mail for you, instead of using ``git
+send-email``. This is the same mechanism b4 uses, and works with the
+kernel.org endpoint for kernel.org-hosted projects such as U-Boot.
+
+Quick start
+~~~~~~~~~~~
+
+1. Install patman with the relay extra, which pulls in patatt::
+
+       pip install patch-manager[send-web]
+
+2. Give patatt a signing key. For an existing PGP key, find its id
+   with::
+
+       gpg --list-secret-keys --keyid-format=long
+
+   and use the id shown after the algorithm (the ``<key-id>`` part of
+   ``rsa4096/<key-id>``, or the full fingerprint on the line below)::
+
+       git config --global patatt.signingkey openpgp:<your-key-id>
+
+   Note the setting is ``patatt.signingkey`` (not ``user.signingKey``).
+   Alternatively create an ed25519 key with ``patatt genkey`` and add
+   the printed ``[patatt]`` block to your git config. Make sure gpg can
+   sign without a prompt getting stuck -- putting ``export
+   GPG_TTY=$(tty)`` in your shell startup usually does it.
+
+3. Point patman at the endpoint. To scope it to one project, use a
+   ``[<project>_settings]`` section in ``~/.patman``::
+
+       [u-boot_settings]
+       send_endpoint_web: https://lkml.kernel.org/_b4_submit
+
+   (or pass ``--send-endpoint-web <url>`` for a single run).
+
+4. Register your key and identity with the endpoint, once::
+
+       patman send --web-auth-new
+
+   It emails you a challenge; finish the registration with::
+
+       patman send --web-auth-verify <challenge>
+
+5. Test with a reflect, which has the endpoint mail the series back to
+   you only (and not to the list)::
+
+       patman send --reflect
+
+   When it looks right, drop ``--reflect`` to send it for real.
+
+Notes
+~~~~~
+
+With the endpoint set, ``patman send`` builds an email per patch (with
+the usual To/Cc), signs each with patatt and posts them. The endpoint
+authenticates each submission by its patatt signature -- there is no
+password or token stored.
+
+Once the endpoint is configured it is used for every ``patman send`` in
+that project. Pass ``--no-relay`` to send with ``git send-email`` for a
+single run.
+
+Threading (``--thread``) and ``--in-reply-to`` work with the relay just
+as with ``git send-email``: the patches reply to the cover letter, which
+can in turn reply to an earlier message.
+
+
 How to add tags
 ---------------
 

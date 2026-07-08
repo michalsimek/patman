@@ -35,6 +35,8 @@ gmail = [
 ]
 # AI-assisted patch review
 review = ["claude-agent-sdk"]
+# Sending patches through a web relay instead of SMTP
+send-web = ["patatt"]
 # Running the test suite (parallel test execution)
 test = ["concurrencytest"]
 # Everything, for a full-featured install
@@ -43,6 +45,7 @@ all = [
     "google-auth-httplib2",
     "google-auth-oauthlib",
     "claude-agent-sdk",
+    "patatt",
     "concurrencytest",
 ]
 
