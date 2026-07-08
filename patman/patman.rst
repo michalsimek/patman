@@ -221,9 +221,9 @@ kernel.org endpoint for kernel.org-hosted projects such as U-Boot.
 Quick start
 ~~~~~~~~~~~
 
-1. Install patman with the relay extra, which pulls in patatt::
+1. Install patman (patatt, which signs the messages, comes with it)::
 
-       pip install patch-manager[send-web]
+       pip install patch-manager
 
 2. Give patatt a signing key. For an existing PGP key, find its id
    with::

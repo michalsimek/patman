@@ -20,7 +20,7 @@ Added
   ``send --web-auth-new`` / ``--web-auth-verify`` register your key and
   identity with the endpoint, and ``--no-relay`` sends with git
   send-email for one run. Threading (``--thread``) and ``--in-reply-to``
-  are honoured. Needs the ``send-web`` extra (patatt).
+  are honoured. Signing uses patatt, now a core dependency.
 
 0.1.0 - 2026-07-05
 ------------------

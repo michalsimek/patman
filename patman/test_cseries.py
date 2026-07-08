@@ -5705,23 +5705,6 @@ VERDICT: skip"""
                 relay.sign_message(b'x')
         self.assertIn('patatt.signingkey', str(cm.exception))
 
-    def test_relay_check_available(self):
-        """Test availability tracks whether patatt can be imported"""
-        import builtins
-        from patman import relay
-        with mock.patch.dict('sys.modules', {'patatt': mock.MagicMock()}):
-            self.assertTrue(relay.check_available())
-
-        orig_import = builtins.__import__
-
-        def no_patatt(name, *args, **kwargs):
-            if name == 'patatt':
-                raise ImportError('no patatt')
-            return orig_import(name, *args, **kwargs)
-
-        with mock.patch('builtins.__import__', side_effect=no_patatt):
-            self.assertFalse(relay.check_available())
-
     def test_relay_auth_new(self):
         """Test auth_new posts the registration request"""
         import json
@@ -5820,9 +5803,8 @@ VERDICT: skip"""
             sent['messages'] = messages
             return len(messages)
 
-        with mock.patch.object(relay, 'check_available', return_value=True), \
-                mock.patch.object(relay, 'sign_message',
-                                  side_effect=lambda data: data), \
+        with mock.patch.object(relay, 'sign_message',
+                               side_effect=lambda data: data), \
                 mock.patch.object(relay, 'submit', side_effect=fake_submit):
             with terminal.capture():
                 send_mod.send_via_relay(
@@ -5904,9 +5886,8 @@ VERDICT: skip"""
             sent.update(endpoint=endpoint, messages=messages, reflect=reflect)
             return len(messages)
 
-        with mock.patch.object(relay, 'check_available', return_value=True), \
-                mock.patch.object(relay, 'sign_message',
-                                  side_effect=lambda data: data), \
+        with mock.patch.object(relay, 'sign_message',
+                               side_effect=lambda data: data), \
                 mock.patch.object(relay, 'submit', side_effect=fake_submit):
             with terminal.capture():
                 n = send_mod.send_via_relay(
@@ -5925,9 +5906,8 @@ VERDICT: skip"""
 
         # Dry run posts nothing
         sent.clear()
-        with mock.patch.object(relay, 'check_available', return_value=True), \
-                mock.patch.object(relay, 'sign_message',
-                                  side_effect=lambda data: data), \
+        with mock.patch.object(relay, 'sign_message',
+                               side_effect=lambda data: data), \
                 mock.patch.object(relay, 'submit',
                                   side_effect=fake_submit) as mock_submit:
             with terminal.capture():
