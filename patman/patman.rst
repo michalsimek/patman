@@ -5,30 +5,47 @@
 .. v1, v2, 19-Oct-11
 .. revised v3 24-Nov-11
 .. revised v4 Independence Day 2020, with Patchwork integration
+.. revised 2026, with AI review, series tracking and web-relay sending
 
 Patman patch manager
 ====================
 
-This tool is a Python script which:
+Patman helps you create, send, track and review patch series for
+projects that take patches by email, such as U-Boot and the Linux
+kernel.
 
-- Creates patch directly from your branch
+When creating and sending a series it:
+
+- Creates patches directly from your branch
 - Cleans them up by removing unwanted tags
-- Inserts a cover letter with change lists
+- Inserts a cover letter with change logs
 - Runs the patches through checkpatch.pl and its own checks
-- Optionally emails them out to selected people
-- Links the series automatically to Patchwork once sent
+- Emails them to the right people, either with git send-email or,
+  when you have no working outbound SMTP, through a web relay (as b4
+  does)
+- Links the series to Patchwork once sent
 
-It also has some Patchwork features:
+Once a series is out for review it helps you track it on Patchwork:
 
-- Manage local series and their status on patchwork
-- Show review tags from Patchwork and allows them to be gathered into commits
-- List comments received on a series
+- Manage your local series and follow their status across versions
+- Show review tags from Patchwork and gather them into your commits
+- List the comments a series has received
 
-It is intended to automate patch creation and make it a less
-error-prone process. It works with any git project that sends patches
-by email. The checkpatch and get_maintainer steps follow the U-Boot
-and Linux kernel conventions and can be skipped for projects that do
-not use them.
+It can also review patches for you, using an AI agent:
+
+- Review any Patchwork series, or your own series before you send it
+- Optionally build Gmail drafts, run Coverity or learn your writing
+  voice from past reviews
+
+The series tracking and stored reviews are kept in an optional local
+database (a ``.patman.db`` file at the top of your git tree), which
+lets patman follow a series across versions and remember past reviews.
+Creating and sending patches works without it.
+
+It is intended to automate the whole process and make it less
+error-prone. It works with any git project that sends patches by email;
+the checkpatch and get_maintainer steps follow the U-Boot and Linux
+kernel conventions and can be skipped for projects that do not use them.
 
 It is configured almost entirely by tags it finds in your commits.
 This means that you can work on a number of different branches at
