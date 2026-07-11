@@ -118,6 +118,16 @@ class TestCseries(unittest.TestCase, TestCommon):
         self.assertTrue(res)
         cser.close_database()
 
+    def test_series_get_max_version_no_versions(self):
+        """A series with no versions reports max version 0, not None"""
+        cser = self.get_database()
+        idnum = cser.db.series_add('video', 'Some series')
+        # No ser_ver rows yet, so MAX(version) is SQL NULL. It must come
+        # back as 0 so callers (e.g. review --scan) can compare it
+        max_ver = cser.db.series_get_max_version(idnum)
+        self.assertEqual(0, max_ver)
+        cser.close_database()
+
     def get_database(self):
         """Open the database and silence the warning output
 

@@ -2538,6 +2538,11 @@ def _scan_new_versions(pwork, cser):
         async with aiohttp.ClientSession() as client:
             for ser in series.values():
                 max_ver = cser.db.series_get_max_version(ser.idnum)
+                # Without a recorded reviewed version there is nothing to
+                # compare against, so skip rather than treat every version
+                # on patchwork as newer
+                if not max_ver:
+                    continue
                 matches = await pwork.query_series(client, ser.desc)
                 newer = [pws for pws in matches
                          if pws['name'] == ser.desc and

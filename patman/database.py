@@ -516,12 +516,15 @@ class Database:  # pylint:disable=R0904
             series_idnum (int): ID of series to look up
 
         Return:
-            int: Maximum version number
+            int: Maximum version number, or 0 if the series has no versions
+                recorded yet
         """
         res = self.execute(
             'SELECT MAX(version) FROM ser_ver WHERE series_id = ?',
             (series_idnum,))
-        return res.fetchall()[0][0]
+        # MAX() over no rows is SQL NULL; report that as 0, not None, so
+        # callers can compare and do arithmetic without a type error
+        return res.fetchall()[0][0] or 0
 
     def series_get_all_max_versions(self):
         """Find the latest version of all series
