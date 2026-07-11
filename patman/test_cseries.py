@@ -128,6 +128,28 @@ class TestCseries(unittest.TestCase, TestCommon):
         self.assertEqual(0, max_ver)
         cser.close_database()
 
+    def test_register_series_atomic_on_error(self):
+        """A failed registration leaves no orphan series (no ser_ver row)"""
+        cser = self.get_database()
+        before = len(cser.db.series_get_dict(include_reviews=True))
+
+        # Fail after the series row is added but before its version, the
+        # exact window that used to leave an orphan behind
+        with mock.patch.object(cser.db, 'ser_ver_add',
+                               side_effect=ValueError('boom')):
+            with self.assertRaises(ValueError):
+                review._register_series(cser, 'Some series', 1, '12345',
+                                        {'patches': []})
+
+        # A later unrelated commit must not flush a half-created series row
+        cser.commit()
+        after = cser.db.series_get_dict(include_reviews=True)
+        self.assertEqual(before, len(after))
+        orphans = [s for s in after.values()
+                   if not cser.db.series_get_max_version(s.idnum)]
+        self.assertEqual([], orphans)
+        cser.close_database()
+
     def get_database(self):
         """Open the database and silence the warning output
 

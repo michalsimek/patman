@@ -1956,46 +1956,55 @@ def _register_series(cser, clean_name, version, link, series_data,
     if existing:
         return None
 
-    prev = cser.db.series_find_review_by_name(clean_name)
-    if prev:
-        series_id, db_name, prev_version = prev
-        tout.notice(f"Previously reviewed '{db_name}' v{prev_version};"
-                    f" adding v{version}")
-    else:
-        branch_name = _make_review_name(link, upstream)
-        series_id = cser.db.series_find_by_name(
-            branch_name, include_archived=True)
-        if not series_id:
-            # Store the cleaned title (stable across versions) as the desc,
-            # not the raw '[vN,0/M] ...' cover-letter subject, so later
-            # versions link to this series via series_find_review_by_name()
-            series_id = cser.db.series_add(branch_name, clean_name,
-                                           ups=upstream)
-        cser.db.series_set_source(series_id, 'review')
+    # Adding the series row, its version and its patches must be atomic.
+    # These are all uncommitted until the commit() below, so if anything
+    # in between raises we roll back; otherwise a freshly-added series row
+    # would linger uncommitted and be flushed by the next unrelated
+    # commit() as an orphan -- a series with no ser_ver row
+    try:
+        prev = cser.db.series_find_review_by_name(clean_name)
+        if prev:
+            series_id, db_name, prev_version = prev
+            tout.notice(f"Previously reviewed '{db_name}' v{prev_version};"
+                        f" adding v{version}")
+        else:
+            branch_name = _make_review_name(link, upstream)
+            series_id = cser.db.series_find_by_name(
+                branch_name, include_archived=True)
+            if not series_id:
+                # Store the cleaned title (stable across versions) as the
+                # desc, not the raw '[vN,0/M] ...' cover-letter subject, so
+                # later versions link via series_find_review_by_name()
+                series_id = cser.db.series_add(branch_name, clean_name,
+                                               ups=upstream)
+            cser.db.series_set_source(series_id, 'review')
 
-    svid = cser.db.ser_ver_add(series_id, version, link=str(link))
+        svid = cser.db.ser_ver_add(series_id, version, link=str(link))
 
-    patches = series_data.get('patches', [])
-    pcommits = []
-    for i, patch in enumerate(patches):
-        pcommits.append(database.Pcommit(idnum=None, seq=i,
-            subject=patch.get('name', ''), svid=svid, change_id=None,
-            state=None, patch_id=patch.get('id'), num_comments=0))
-    if pcommits:
-        cser.db.pcommit_add_list(svid, pcommits)
+        patches = series_data.get('patches', [])
+        pcommits = []
+        for i, patch in enumerate(patches):
+            pcommits.append(database.Pcommit(idnum=None, seq=i,
+                subject=patch.get('name', ''), svid=svid, change_id=None,
+                state=None, patch_id=patch.get('id'), num_comments=0))
+        if pcommits:
+            cser.db.pcommit_add_list(svid, pcommits)
 
-        # pcommit_add_list only stores seq/subject/change_id; update
-        # patch_id from the patchwork data
-        pclist = cser.db.pcommit_get_list(svid)
-        for pcm, patch in zip(pclist, patches):
-            patch_id = patch.get('id')
-            if patch_id:
-                cser.db.pcommit_update(database.Pcommit(
-                    idnum=pcm.idnum, seq=pcm.seq, subject=pcm.subject,
-                    svid=svid, change_id=pcm.change_id, state=pcm.state,
-                    patch_id=patch_id, num_comments=pcm.num_comments))
+            # pcommit_add_list only stores seq/subject/change_id; update
+            # patch_id from the patchwork data
+            pclist = cser.db.pcommit_get_list(svid)
+            for pcm, patch in zip(pclist, patches):
+                patch_id = patch.get('id')
+                if patch_id:
+                    cser.db.pcommit_update(database.Pcommit(
+                        idnum=pcm.idnum, seq=pcm.seq, subject=pcm.subject,
+                        svid=svid, change_id=pcm.change_id, state=pcm.state,
+                        patch_id=patch_id, num_comments=pcm.num_comments))
 
-    cser.commit()
+        cser.commit()
+    except Exception:
+        cser.rollback()
+        raise
     tout.notice(f"Added series '{clean_name}' v{version} to database")
     return series_id, svid
 
