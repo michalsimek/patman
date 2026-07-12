@@ -10,6 +10,9 @@ Unreleased
 
 Added
 ~~~~~
+- ``review --scan`` prints a per-series summary before its totals: one
+  line per reviewed series giving the link, patch count, how many
+  patches drew comments, how many were approved and the title.
 - ``review --model`` chooses the Claude model to review with (e.g.
   ``sonnet``, ``opus`` or a full model id), overriding your global
   Claude default so a review need not use a personal default such as

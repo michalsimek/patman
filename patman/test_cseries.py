@@ -177,6 +177,33 @@ class TestCseries(unittest.TestCase, TestCommon):
             self.assertIn(alias, text)
         self.assertIn('--model', text)
 
+    def test_scan_review_stats(self):
+        """_review_stats counts patches, comments and approvals per series"""
+        from patman import database
+        cser = self.get_database()
+        sid = cser.db.series_add('vid', 'My series')
+        cser.db.series_set_source(sid, 'review')
+        svid = cser.db.ser_ver_add(sid, 1, link='999001')
+        pcs = [database.Pcommit(idnum=None, seq=i, subject=f'p{i}',
+                                svid=svid, change_id=None, state=None,
+                                patch_id=None, num_comments=0)
+               for i in range(3)]
+        cser.db.pcommit_add_list(svid, pcs)
+        # cover approved (seq 0, ignored), patch 1 approved, patch 2
+        # commented, patch 3 left unreviewed
+        cser.db.review_add(svid, 0, 'cover', True, 't')
+        cser.db.review_add(svid, 1, 'lgtm', True, 't')
+        cser.db.review_add(svid, 2, 'please fix', False, 't')
+        cser.commit()
+
+        # 3 patches, 1 with comments, 1 approved
+        self.assertEqual((3, 1, 1), review._review_stats(cser, '999001'))
+        # Passing an int link works too (find casts to str)
+        self.assertEqual((3, 1, 1), review._review_stats(cser, 999001))
+        # Unknown link -> None
+        self.assertIsNone(review._review_stats(cser, '404'))
+        cser.close_database()
+
     def test_scan_child_passes_model(self):
         """--model is forwarded to each scan child review"""
         args = Namespace(

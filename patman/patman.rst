@@ -1673,10 +1673,19 @@ Reviews run in parallel, each in its own child process and review
 worktree, up to ``--jobs`` (``-j``) at a time (default 4).
 
 Each review's output is buffered and printed as one block when it
-finishes, prefixed with a ``[done/total]`` counter and ending with a
-summary line::
+finishes, prefixed with a ``[done/total]`` counter. Once all the
+reviews finish, a per-series summary lists, for each reviewed series,
+its link, patch count, how many patches drew comments, how many were
+approved and the title, followed by the one-line totals::
 
+    Review summary:
+      511354: 11 patches, 0 with comments, 3 approved - Qualcomm IPQ5210 SoC bringup
+      511094: 6 patches, 5 with comments, 0 approved - Improve U-Boot's TPM handling
     Scanned: 3 new, 1 reviewed, 1 waiting, 1 skipped, 0 failed
+
+A patch counts as approved when its review approved it and as commented
+when the review requested changes; a patch the review had nothing to
+say about counts as neither.
 
 Use ``-n`` / ``--dry-run`` to see which series would be reviewed,
 waiting or skipped, without launching any reviews.

@@ -2708,6 +2708,36 @@ def _print_scan_result(result, done, total):
         tout.notice(result.output.rstrip())
 
 
+def _review_stats(cser, link):
+    """Count patches, comments and approvals for a reviewed series version
+
+    Args:
+        cser (Cseries): Open cseries instance
+        link (str or int): Patchwork link of the reviewed version
+
+    Returns:
+        tuple or None: (num_patches, num_commented, num_approved), or None
+            if the version is not in the database. A patch is 'commented'
+            when its stored review requested changes and 'approved' when it
+            was approved; the cover letter (seq 0) is not counted, and a
+            patch the review had nothing to say about counts in neither
+    """
+    found = cser.db.series_find_by_link(link)
+    if not found:
+        return None
+    _, _, _, svid = found
+    num_patches = len(cser.db.pcommit_get_list(svid))
+    approved = commented = 0
+    for rev in cser.db.review_get_for_version(svid):
+        if not rev.seq:
+            continue
+        if rev.approved:
+            approved += 1
+        else:
+            commented += 1
+    return num_patches, commented, approved
+
+
 def _do_scan(args, pwork, cser):
     """Scan patchwork for new versions of already-reviewed series
 
@@ -2761,6 +2791,7 @@ def _do_scan(args, pwork, cser):
         tout.notice(f'Launching {total} review(s), {min(jobs, total)} '
                     'at a time')
         done = 0
+        ok_links = set()
         with futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             pending = [pool.submit(_review_one_subprocess, args, new.desc,
                                    new.version, new.link)
@@ -2771,6 +2802,23 @@ def _do_scan(args, pwork, cser):
                 _print_scan_result(result, done, total)
                 if result.returncode:
                     failed += 1
+                else:
+                    ok_links.add(result.link)
+
+        # Long-form summary of what each review found, in the order the
+        # versions were listed above, before the one-line totals
+        summarised = [new for new in to_review if new.link in ok_links]
+        if summarised:
+            tout.notice('')
+            tout.notice('Review summary:')
+            for new in summarised:
+                stats = _review_stats(cser, new.link)
+                if stats is None:
+                    continue
+                n_patches, commented, approved = stats
+                tout.notice(
+                    f'  {new.link}: {n_patches} patches, {commented} with '
+                    f'comments, {approved} approved - {new.desc}')
 
     tout.notice(f'Scanned: {len(found)} new, {total - failed} reviewed, '
                 f'{waiting} waiting, {skipped} skipped, {failed} failed')
