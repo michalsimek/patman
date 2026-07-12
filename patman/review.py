@@ -45,6 +45,32 @@ try:
 except ImportError:
     ClaudeAgentOptions = None
 
+# Claude model to use for the current review run, or None to let the SDK
+# use whatever model the user's Claude default resolves to. Set once at the
+# start of do_review() from --model / the 'model' setting, then read by
+# _agent_options() so every agent in the run uses the same model
+_AGENT_MODEL = None
+
+
+def _agent_options(**kwargs):
+    """Create ClaudeAgentOptions with the selected review model applied
+
+    A model chosen with --model (or the 'model' setting) overrides the
+    user's global Claude default for the whole review run, so a review
+    always uses the intended model even if the user's default is something
+    else. With no model selected the SDK default is used unchanged.
+
+    Args:
+        kwargs: Fields to pass to ClaudeAgentOptions
+
+    Returns:
+        ClaudeAgentOptions: Configured options
+    """
+    if _AGENT_MODEL:
+        kwargs.setdefault('model', _AGENT_MODEL)
+    return ClaudeAgentOptions(**kwargs)
+
+
 class ReviewContext:  # pylint: disable=R0902
     """Common context for review operations
 
@@ -245,7 +271,7 @@ async def apply_series(pwork, link, branch_name, upstream_branch,
 
     # Build the prompt and run the agent
     prompt = _build_apply_prompt(mbox_path, branch_name, upstream_branch)
-    options = ClaudeAgentOptions(
+    options = _agent_options(
         allowed_tools=['Bash', 'Read', 'Grep', 'Edit', 'Write'],
         cwd=repo_path, max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
@@ -1015,7 +1041,7 @@ Match this voice when editing the reviews:
     prompt = _REFINE_REVIEWS_PROMPT.format(drafts=drafts_text,
         voice_section=voice_section, spelling=spelling)
 
-    options = ClaudeAgentOptions(allowed_tools=[],
+    options = _agent_options(allowed_tools=[],
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
     tout.notice('Refining review drafts...')
@@ -1113,7 +1139,7 @@ async def _run_cover_review(ctx, all_commits):
     tout.notice('Reviewing series (cover letter)...')
     prompt = _build_cover_review_prompt(
         ctx, all_commits, previous_review=ctx.previous_reviews.get(0))
-    options = ClaudeAgentOptions(
+    options = _agent_options(
         allowed_tools=['Bash', 'Read', 'Grep'], cwd=ctx.repo_path,
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
     success, log = await claude_mod.run_agent_collect(prompt, options)
@@ -1166,7 +1192,7 @@ async def _run_patch_review(ctx, cmt, seq, all_commits):
     previous_review = ctx.previous_reviews.get(seq)
     prompt = _build_review_prompt(ctx, cmt.hash, seq, all_commits,
                                   previous_review)
-    options = ClaudeAgentOptions(allowed_tools=['Bash', 'Read', 'Grep'],
+    options = _agent_options(allowed_tools=['Bash', 'Read', 'Grep'],
         cwd=ctx.repo_path, max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
     success, log = await claude_mod.run_agent_collect(prompt, options)
     if not success or not log.strip():
@@ -2614,6 +2640,8 @@ def _build_review_command(args, link):
         cmd += ['--spelling', args.spelling]
     if getattr(args, 'context', None):
         cmd += ['-c', args.context]
+    if getattr(args, 'model', None):
+        cmd += ['--model', args.model]
     if getattr(args, 'create_drafts', False):
         cmd.append('--create-drafts')
     return cmd
@@ -2805,6 +2833,11 @@ def do_review(args, pwork, cser):
         pwork (Patchwork): Configured patchwork instance
         cser (Cseries): Open cseries instance
     """
+    # Fix the model for the whole run, so every agent uses the one chosen
+    # with --model / the 'model' setting rather than the user's default
+    global _AGENT_MODEL
+    _AGENT_MODEL = getattr(args, 'model', None)
+
     if args.learn_voice:
         return _do_learn_voice(args, pwork)
 
@@ -2959,7 +2992,7 @@ async def learn_voice(vp):
     tools.write_file(reviews_path, combined, binary=False)
 
     prompt = _VOICE_PROMPT.format(emails=f'(see file: {reviews_path})')
-    options = ClaudeAgentOptions(allowed_tools=['Read'],
+    options = _agent_options(allowed_tools=['Read'],
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
     success, result = await claude_mod.run_agent_collect(prompt, options)
@@ -3051,7 +3084,7 @@ async def refine_voice(draft_body, sent_body):
 
     prompt = _REFINE_PROMPT.format(draft_path=draft_path,
         sent_path=sent_path, voice_path=VOICE_PATH)
-    options = ClaudeAgentOptions(allowed_tools=['Read'],
+    options = _agent_options(allowed_tools=['Read'],
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
     tout.notice('Analysing draft vs sent differences...')
@@ -3154,7 +3187,7 @@ async def handle_reply(ctx, review_body, reply_from, reply_body):
     prompt = _REPLY_PROMPT.format(review_path=review_path,
         reply_path=reply_path, reply_from=reply_from,
         spelling=ctx.spelling)
-    options = ClaudeAgentOptions(allowed_tools=['Bash', 'Read', 'Grep'],
+    options = _agent_options(allowed_tools=['Bash', 'Read', 'Grep'],
         cwd=ctx.repo_path, max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
     success, log = await claude_mod.run_agent_collect(prompt, options)

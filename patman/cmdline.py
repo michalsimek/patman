@@ -703,6 +703,11 @@ def add_review_subparser(subparsers):
         '-c', '--context', type=str, default=None,
         help="Extra context for the review agent — e.g. 'this is RFC, "
              "ignore whitespace'. Use '@path' to read from a file.")
+    review.add_argument(
+        '--model', type=str, default=None,
+        help="Claude model to review with (e.g. 'sonnet', 'opus' or a full "
+             "model id). Overrides your global Claude default; set 'model' "
+             "in .patman to pin it. Defaults to your Claude default.")
     return review
 
 

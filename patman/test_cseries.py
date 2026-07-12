@@ -141,6 +141,45 @@ class TestCseries(unittest.TestCase, TestCommon):
         self.assertTrue(
             os.path.isdir(os.path.join(pkg_parent, 'patman')))
 
+    def test_agent_options_applies_model(self):
+        """_agent_options injects the chosen model, else leaves it unset"""
+        captured = {}
+
+        def fake_opts(**kwargs):
+            captured.clear()
+            captured.update(kwargs)
+            return kwargs
+
+        with mock.patch.object(review, 'ClaudeAgentOptions',
+                               side_effect=fake_opts):
+            # No model chosen: nothing is added, SDK default is used
+            with mock.patch.object(review, '_AGENT_MODEL', None):
+                review._agent_options(allowed_tools=[])
+                self.assertNotIn('model', captured)
+
+            # A chosen model is passed through
+            with mock.patch.object(review, '_AGENT_MODEL', 'sonnet'):
+                review._agent_options(allowed_tools=[])
+                self.assertEqual('sonnet', captured.get('model'))
+
+                # An explicit model wins over the run-wide default
+                review._agent_options(model='opus')
+                self.assertEqual('opus', captured.get('model'))
+
+    def test_scan_child_passes_model(self):
+        """--model is forwarded to each scan child review"""
+        args = Namespace(
+            project=None, patchwork_url=None, verbose=False, debug=False,
+            upstream=None, reviewer=None, base_branch=None,
+            gmail_account=None, signoff=None, spelling=None, context=None,
+            model='sonnet', create_drafts=False)
+        cmd = review._build_review_command(args, 12345)
+        self.assertIn('--model', cmd)
+        self.assertEqual('sonnet', cmd[cmd.index('--model') + 1])
+
+        args.model = None
+        self.assertNotIn('--model', review._build_review_command(args, 12345))
+
     def test_register_series_atomic_on_error(self):
         """A failed registration leaves no orphan series (no ser_ver row)"""
         cser = self.get_database()

@@ -10,6 +10,10 @@ Unreleased
 
 Added
 ~~~~~
+- ``review --model`` chooses the Claude model to review with (e.g.
+  ``sonnet``, ``opus`` or a full model id), overriding your global
+  Claude default so a review need not use a personal default such as
+  Fable. Set ``model`` in ``.patman`` to pin it for a project.
 - ``review -w`` / ``--whole-series`` reviews the whole series when you
   locate it with ``-p`` / ``-P``, instead of just the one patch. Useful
   when you know a patch but not the cover letter.

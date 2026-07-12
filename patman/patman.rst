@@ -1406,6 +1406,19 @@ To review only specific patches by index within the series::
 
     patman review -s 497923 -i 1,3,5
 
+By default the review uses whatever your Claude default model resolves
+to. To review with a particular model instead, use ``--model``::
+
+    patman review -s 497923 --model sonnet
+
+This overrides your global Claude default for the review, so if your
+default is set to something you would rather not review with, a review
+still uses the model you name. Put ``model`` in ``.patman`` to pin it
+for a project::
+
+    [u-boot_settings]
+    model: sonnet
+
 To create Gmail drafts threaded under the original emails::
 
     patman review -s 497923 -U us \
