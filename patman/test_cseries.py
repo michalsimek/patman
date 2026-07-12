@@ -128,6 +128,19 @@ class TestCseries(unittest.TestCase, TestCommon):
         self.assertEqual(0, max_ver)
         cser.close_database()
 
+    def test_scan_child_env_has_patman_on_path(self):
+        """A scan child gets patman on PYTHONPATH, keeping any existing"""
+        pkg_parent = os.path.dirname(
+            os.path.dirname(os.path.abspath(review.__file__)))
+        with mock.patch.dict(os.environ, {'PYTHONPATH': '/existing/path'}):
+            env = review._child_env()
+        parts = env['PYTHONPATH'].split(os.pathsep)
+        self.assertIn(pkg_parent, parts)
+        self.assertIn('/existing/path', parts)
+        # 'python -m patman' from that directory imports the same package
+        self.assertTrue(
+            os.path.isdir(os.path.join(pkg_parent, 'patman')))
+
     def test_register_series_atomic_on_error(self):
         """A failed registration leaves no orphan series (no ser_ver row)"""
         cser = self.get_database()

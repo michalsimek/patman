@@ -2619,6 +2619,28 @@ def _build_review_command(args, link):
     return cmd
 
 
+def _child_env():
+    """Build the environment for a 'python -m patman' child process
+
+    The child re-invokes patman with 'sys.executable -m patman'. When
+    patman is run from a source checkout rather than an installed package,
+    a fresh interpreter cannot import it, so put the directory that holds
+    the patman package on PYTHONPATH. This is where the parent found it:
+    two levels up from this module (patman/review.py -> patman -> parent).
+    For an installed patman the directory is already importable, so adding
+    it changes nothing.
+
+    Returns:
+        dict: Environment for the child process
+    """
+    env = os.environ.copy()
+    pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    existing = env.get('PYTHONPATH', '')
+    env['PYTHONPATH'] = (pkg_parent + os.pathsep + existing if existing
+                         else pkg_parent)
+    return env
+
+
 def _review_one_subprocess(args, desc, version, link):
     """Review a single series in a child process
 
@@ -2637,7 +2659,8 @@ def _review_one_subprocess(args, desc, version, link):
     """
     cmd = _build_review_command(args, link)
     proc = subprocess.run(cmd, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True, check=False)
+                          stderr=subprocess.STDOUT, text=True, check=False,
+                          env=_child_env())
     return ScanResult(desc, version, link, proc.returncode, proc.stdout)
 
 
