@@ -708,6 +708,9 @@ def add_review_subparser(subparsers):
         help="Claude model to review with (e.g. 'sonnet', 'opus' or a full "
              "model id). Overrides your global Claude default; set 'model' "
              "in .patman to pin it. Defaults to your Claude default.")
+    review.add_argument(
+        '--list-models', action='store_true',
+        help='List the model aliases that --model accepts, then exit')
     return review
 
 

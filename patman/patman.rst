@@ -1419,6 +1419,13 @@ for a project::
     [u-boot_settings]
     model: sonnet
 
+To see the aliases ``--model`` accepts::
+
+    patman review --list-models
+
+The aliases (``opus``, ``sonnet``, ``haiku``) each select the latest
+model in their tier; a full model id works too.
+
 To create Gmail drafts threaded under the original emails::
 
     patman review -s 497923 -U us \

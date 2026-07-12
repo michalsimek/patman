@@ -166,6 +166,17 @@ class TestCseries(unittest.TestCase, TestCommon):
                 review._agent_options(model='opus')
                 self.assertEqual('opus', captured.get('model'))
 
+    def test_review_list_models(self):
+        """--list-models prints the accepted aliases and exits cleanly"""
+        args = Namespace(list_models=True, model=None)
+        with terminal.capture() as (out, _):
+            ret = review.do_review(args, None, None)
+        self.assertEqual(0, ret)
+        text = out.getvalue()
+        for alias in ('opus', 'sonnet', 'haiku'):
+            self.assertIn(alias, text)
+        self.assertIn('--model', text)
+
     def test_scan_child_passes_model(self):
         """--model is forwarded to each scan child review"""
         args = Namespace(

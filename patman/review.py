@@ -2822,6 +2822,36 @@ def _do_relink(args, cser):
     return 0
 
 
+# Model aliases accepted by --model, most to least capable. Each resolves
+# to the latest model in its tier, so this list does not go stale as new
+# generations ship. The Claude SDK and CLI expose no way to enumerate
+# models, and the REST models API needs an API key that need not match the
+# subscription a review authenticates with, so a fixed alias list is both
+# the most reliable answer and exactly what --model expects
+_MODEL_ALIASES = (
+    ('opus', 'Most capable; best for a thorough review'),
+    ('sonnet', 'Balanced capability and speed'),
+    ('haiku', 'Fastest and cheapest; light reviews'),
+)
+
+
+def _list_models():
+    """Print the model aliases that --model accepts
+
+    Returns:
+        int: 0
+    """
+    print("Models you can pass to --model (or set as the 'model' setting):")
+    print()
+    for alias, desc in _MODEL_ALIASES:
+        print(f'  {alias:<8} {desc}')
+    print()
+    print('Each alias selects the latest model in its tier. A full model')
+    print('id (e.g. claude-sonnet-5) also works. With none set, your global')
+    print('Claude default is used.')
+    return 0
+
+
 def do_review(args, pwork, cser):
     """Run the review command
 
@@ -2833,6 +2863,9 @@ def do_review(args, pwork, cser):
         pwork (Patchwork): Configured patchwork instance
         cser (Cseries): Open cseries instance
     """
+    if getattr(args, 'list_models', False):
+        return _list_models()
+
     # Fix the model for the whole run, so every agent uses the one chosen
     # with --model / the 'model' setting rather than the user's default
     global _AGENT_MODEL
