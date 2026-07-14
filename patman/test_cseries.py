@@ -3683,6 +3683,15 @@ Date:   .*
                          patchstream.split_name_version('fred'))
         self.assertEqual(('mary', 2), patchstream.split_name_version('mary2'))
 
+        # Only the trailing digits are the version, so a name may have
+        # digits of its own in the middle
+        self.assertEqual(('rv1106e', None),
+                         patchstream.split_name_version('rv1106e'))
+        self.assertEqual(('rv1106e', 2),
+                         patchstream.split_name_version('rv1106e2'))
+        self.assertEqual(('rv1106e', 10),
+                         patchstream.split_name_version('rv1106e10'))
+
         ser, version = cser._parse_series_and_version(None, None)
         self.assertEqual('first', ser.name)
         self.assertEqual(1, version)

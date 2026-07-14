@@ -33,6 +33,13 @@ Added
   send-email for one run. Threading (``--thread``) and ``--in-reply-to``
   are honoured. Signing uses patatt, now a core dependency.
 
+Fixed
+~~~~~
+- A branch whose name has digits in the middle, such as ``rv1106e2``,
+  now takes its version from the trailing digits like any other. Its
+  version was read as 1 rather than 2, so ``series add`` failed with
+  "suggests version 1 but Series-version tag indicates 2".
+
 0.1.0 - 2026-07-05
 ------------------
 

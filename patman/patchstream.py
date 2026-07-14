@@ -76,9 +76,13 @@ STATE_DIFFS = 3             # In the diff part (past --- line)
 def split_name_version(in_name):
     """Split a branch name into its series name and its version
 
-    For example:
-        'series' returns ('series', 1)
+    Only the digits at the end of the name give the version, so the name
+    itself may contain digits. For example:
+        'series' returns ('series', None)
         'series3' returns ('series', 3)
+        'rv1106e' returns ('rv1106e', None)
+        'rv1106e2' returns ('rv1106e', 2)
+
     Args:
         in_name (str): Name to parse
 
@@ -87,14 +91,13 @@ def split_name_version(in_name):
             str: series name
             int: series version, or None if there is none in in_name
     """
-    m_ver = re.match(r'([^0-9]*)(\d*)$', in_name)
-    version = None
-    if m_ver:
-        name = m_ver.group(1)
-        if m_ver.group(2):
-            version = int(m_ver.group(2))
-    else:
-        name = in_name
+    # The name is everything up to the trailing digits. Match it lazily so
+    # that only the final run of digits is taken as the version: a greedy
+    # 'not a digit' match would fail on a name with digits in the middle,
+    # such as 'rv1106e2', leaving it with no version at all
+    m_ver = re.match(r'(.*?)(\d*)$', in_name)
+    name = m_ver.group(1)
+    version = int(m_ver.group(2)) if m_ver.group(2) else None
     return name, version
 
 
