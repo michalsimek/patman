@@ -430,6 +430,11 @@ def do_review(args, test_db=None, pwork=None, cser=None):
         cser (Cseries): Cseries object to use, or None to create
             one
     """
+    # Listing models needs no database or patchwork URL; answer and return
+    # before either is set up (opening the database would create one)
+    if getattr(args, 'list_models', False):
+        return review_mod.do_review(args, None, None)
+
     if not cser:
         cser = cseries.Cseries(test_db)
     try:

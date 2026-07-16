@@ -118,6 +118,128 @@ class TestCseries(unittest.TestCase, TestCommon):
         self.assertTrue(res)
         cser.close_database()
 
+    def test_series_get_max_version_no_versions(self):
+        """A series with no versions reports max version 0, not None"""
+        cser = self.get_database()
+        idnum = cser.db.series_add('video', 'Some series')
+        # No ser_ver rows yet, so MAX(version) is SQL NULL. It must come
+        # back as 0 so callers (e.g. review --scan) can compare it
+        max_ver = cser.db.series_get_max_version(idnum)
+        self.assertEqual(0, max_ver)
+        cser.close_database()
+
+    def test_scan_child_env_has_patman_on_path(self):
+        """A scan child gets patman on PYTHONPATH, keeping any existing"""
+        pkg_parent = os.path.dirname(
+            os.path.dirname(os.path.abspath(review.__file__)))
+        with mock.patch.dict(os.environ, {'PYTHONPATH': '/existing/path'}):
+            env = review._child_env()
+        parts = env['PYTHONPATH'].split(os.pathsep)
+        self.assertIn(pkg_parent, parts)
+        self.assertIn('/existing/path', parts)
+        # 'python -m patman' from that directory imports the same package
+        self.assertTrue(
+            os.path.isdir(os.path.join(pkg_parent, 'patman')))
+
+    def test_agent_options_applies_model(self):
+        """_agent_options injects the chosen model, else leaves it unset"""
+        captured = {}
+
+        def fake_opts(**kwargs):
+            captured.clear()
+            captured.update(kwargs)
+            return kwargs
+
+        with mock.patch.object(review, 'ClaudeAgentOptions',
+                               side_effect=fake_opts):
+            # No model chosen: nothing is added, SDK default is used
+            with mock.patch.object(review, '_AGENT_MODEL', None):
+                review._agent_options(allowed_tools=[])
+                self.assertNotIn('model', captured)
+
+            # A chosen model is passed through
+            with mock.patch.object(review, '_AGENT_MODEL', 'sonnet'):
+                review._agent_options(allowed_tools=[])
+                self.assertEqual('sonnet', captured.get('model'))
+
+                # An explicit model wins over the run-wide default
+                review._agent_options(model='opus')
+                self.assertEqual('opus', captured.get('model'))
+
+    def test_review_list_models(self):
+        """--list-models prints the accepted aliases and exits cleanly"""
+        args = Namespace(list_models=True, model=None)
+        with terminal.capture() as (out, _):
+            ret = review.do_review(args, None, None)
+        self.assertEqual(0, ret)
+        text = out.getvalue()
+        for alias in ('opus', 'sonnet', 'haiku'):
+            self.assertIn(alias, text)
+        self.assertIn('--model', text)
+
+    def test_scan_review_stats(self):
+        """_review_stats counts patches, comments and approvals per series"""
+        from patman import database
+        cser = self.get_database()
+        sid = cser.db.series_add('vid', 'My series')
+        cser.db.series_set_source(sid, 'review')
+        svid = cser.db.ser_ver_add(sid, 1, link='999001')
+        pcs = [database.Pcommit(idnum=None, seq=i, subject=f'p{i}',
+                                svid=svid, change_id=None, state=None,
+                                patch_id=None, num_comments=0)
+               for i in range(3)]
+        cser.db.pcommit_add_list(svid, pcs)
+        # cover approved (seq 0, ignored), patch 1 approved, patch 2
+        # commented, patch 3 left unreviewed
+        cser.db.review_add(svid, 0, 'cover', True, 't')
+        cser.db.review_add(svid, 1, 'lgtm', True, 't')
+        cser.db.review_add(svid, 2, 'please fix', False, 't')
+        cser.commit()
+
+        # 3 patches, 1 with comments, 1 approved
+        self.assertEqual((3, 1, 1), review._review_stats(cser, '999001'))
+        # Passing an int link works too (find casts to str)
+        self.assertEqual((3, 1, 1), review._review_stats(cser, 999001))
+        # Unknown link -> None
+        self.assertIsNone(review._review_stats(cser, '404'))
+        cser.close_database()
+
+    def test_scan_child_passes_model(self):
+        """--model is forwarded to each scan child review"""
+        args = Namespace(
+            project=None, patchwork_url=None, verbose=False, debug=False,
+            upstream=None, reviewer=None, base_branch=None,
+            gmail_account=None, signoff=None, spelling=None, context=None,
+            model='sonnet', create_drafts=False)
+        cmd = review._build_review_command(args, 12345)
+        self.assertIn('--model', cmd)
+        self.assertEqual('sonnet', cmd[cmd.index('--model') + 1])
+
+        args.model = None
+        self.assertNotIn('--model', review._build_review_command(args, 12345))
+
+    def test_register_series_atomic_on_error(self):
+        """A failed registration leaves no orphan series (no ser_ver row)"""
+        cser = self.get_database()
+        before = len(cser.db.series_get_dict(include_reviews=True))
+
+        # Fail after the series row is added but before its version, the
+        # exact window that used to leave an orphan behind
+        with mock.patch.object(cser.db, 'ser_ver_add',
+                               side_effect=ValueError('boom')):
+            with self.assertRaises(ValueError):
+                review._register_series(cser, 'Some series', 1, '12345',
+                                        {'patches': []})
+
+        # A later unrelated commit must not flush a half-created series row
+        cser.commit()
+        after = cser.db.series_get_dict(include_reviews=True)
+        self.assertEqual(before, len(after))
+        orphans = [s for s in after.values()
+                   if not cser.db.series_get_max_version(s.idnum)]
+        self.assertEqual([], orphans)
+        cser.close_database()
+
     def get_database(self):
         """Open the database and silence the warning output
 
@@ -3561,6 +3683,15 @@ Date:   .*
                          patchstream.split_name_version('fred'))
         self.assertEqual(('mary', 2), patchstream.split_name_version('mary2'))
 
+        # Only the trailing digits are the version, so a name may have
+        # digits of its own in the middle
+        self.assertEqual(('rv1106e', None),
+                         patchstream.split_name_version('rv1106e'))
+        self.assertEqual(('rv1106e', 2),
+                         patchstream.split_name_version('rv1106e2'))
+        self.assertEqual(('rv1106e', 10),
+                         patchstream.split_name_version('rv1106e10'))
+
         ser, version = cser._parse_series_and_version(None, None)
         self.assertEqual('first', ser.name)
         self.assertEqual(1, version)
@@ -4849,6 +4980,30 @@ Date:   .*
         self.assertIn('available', str(cm.exception))
         self.assertIn('v1', str(cm.exception))
 
+    def test_review_patch_title_whole_series(self):
+        """Test -P restricts to the found patch unless -w reviews it all"""
+        def make_args(whole):
+            return Namespace(
+                learn_voice=False, sync=False, relink=False, scan=False,
+                pw_link=None, title=None, patch=None,
+                patch_title='some subject', patches=None, whole_series=whole)
+
+        # search_patch locates the series (link) and the patch's position
+        with mock.patch.object(review, 'search_patch',
+                               return_value=('link-xyz', 3)), \
+                mock.patch.object(review, '_review_link') as rev_link:
+            # Default: review just the located patch (index 3)
+            args = make_args(False)
+            review.do_review(args, None, None)
+            self.assertEqual('3', args.patches)
+            rev_link.assert_called_once_with(args, None, None, 'link-xyz')
+
+            # -w: locate via the patch but review the whole series
+            args = make_args(True)
+            review.do_review(args, None, None)
+            self.assertIsNone(args.patches)
+            rev_link.assert_called_with(args, None, None, 'link-xyz')
+
     def test_review_no_link_or_title(self):
         """Test that missing -l and -t gives a proper error"""
         self.get_cser()
@@ -5705,23 +5860,6 @@ VERDICT: skip"""
                 relay.sign_message(b'x')
         self.assertIn('patatt.signingkey', str(cm.exception))
 
-    def test_relay_check_available(self):
-        """Test availability tracks whether patatt can be imported"""
-        import builtins
-        from patman import relay
-        with mock.patch.dict('sys.modules', {'patatt': mock.MagicMock()}):
-            self.assertTrue(relay.check_available())
-
-        orig_import = builtins.__import__
-
-        def no_patatt(name, *args, **kwargs):
-            if name == 'patatt':
-                raise ImportError('no patatt')
-            return orig_import(name, *args, **kwargs)
-
-        with mock.patch('builtins.__import__', side_effect=no_patatt):
-            self.assertFalse(relay.check_available())
-
     def test_relay_auth_new(self):
         """Test auth_new posts the registration request"""
         import json
@@ -5820,9 +5958,8 @@ VERDICT: skip"""
             sent['messages'] = messages
             return len(messages)
 
-        with mock.patch.object(relay, 'check_available', return_value=True), \
-                mock.patch.object(relay, 'sign_message',
-                                  side_effect=lambda data: data), \
+        with mock.patch.object(relay, 'sign_message',
+                               side_effect=lambda data: data), \
                 mock.patch.object(relay, 'submit', side_effect=fake_submit):
             with terminal.capture():
                 send_mod.send_via_relay(
@@ -5904,9 +6041,8 @@ VERDICT: skip"""
             sent.update(endpoint=endpoint, messages=messages, reflect=reflect)
             return len(messages)
 
-        with mock.patch.object(relay, 'check_available', return_value=True), \
-                mock.patch.object(relay, 'sign_message',
-                                  side_effect=lambda data: data), \
+        with mock.patch.object(relay, 'sign_message',
+                               side_effect=lambda data: data), \
                 mock.patch.object(relay, 'submit', side_effect=fake_submit):
             with terminal.capture():
                 n = send_mod.send_via_relay(
@@ -5925,9 +6061,8 @@ VERDICT: skip"""
 
         # Dry run posts nothing
         sent.clear()
-        with mock.patch.object(relay, 'check_available', return_value=True), \
-                mock.patch.object(relay, 'sign_message',
-                                  side_effect=lambda data: data), \
+        with mock.patch.object(relay, 'sign_message',
+                               side_effect=lambda data: data), \
                 mock.patch.object(relay, 'submit',
                                   side_effect=fake_submit) as mock_submit:
             with terminal.capture():

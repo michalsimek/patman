@@ -43,19 +43,6 @@ _NO_KEY_HELP = (
     '[patatt] section to your git config.')
 
 
-def check_available():
-    """Check whether patatt is importable (needed to sign messages)
-
-    Returns:
-        bool: True if the patatt library is installed
-    """
-    try:
-        import patatt  # noqa: F401  pylint: disable=C0415,W0611
-        return True
-    except ImportError:
-        return False
-
-
 def sign_message(msg_bytes):
     """Attest a message with patatt
 
@@ -190,12 +177,8 @@ def _auth_config():
             email address
 
     Raises:
-        ValueError: if patatt is unavailable, or no email/key is configured
+        ValueError: if no email or signing key is configured
     """
-    if not check_available():
-        raise ValueError(
-            'patatt is required for web-endpoint registration; install it '
-            "with 'pip install patch-manager[send-web]'")
     import patatt
     identity = _git_config('user.email')
     if not identity:

@@ -5,30 +5,47 @@
 .. v1, v2, 19-Oct-11
 .. revised v3 24-Nov-11
 .. revised v4 Independence Day 2020, with Patchwork integration
+.. revised 2026, with AI review, series tracking and web-relay sending
 
 Patman patch manager
 ====================
 
-This tool is a Python script which:
+Patman helps you create, send, track and review patch series for
+projects that take patches by email, such as U-Boot and the Linux
+kernel.
 
-- Creates patch directly from your branch
+When creating and sending a series it:
+
+- Creates patches directly from your branch
 - Cleans them up by removing unwanted tags
-- Inserts a cover letter with change lists
+- Inserts a cover letter with change logs
 - Runs the patches through checkpatch.pl and its own checks
-- Optionally emails them out to selected people
-- Links the series automatically to Patchwork once sent
+- Emails them to the right people, either with git send-email or,
+  when you have no working outbound SMTP, through a web relay (as b4
+  does)
+- Links the series to Patchwork once sent
 
-It also has some Patchwork features:
+Once a series is out for review it helps you track it on Patchwork:
 
-- Manage local series and their status on patchwork
-- Show review tags from Patchwork and allows them to be gathered into commits
-- List comments received on a series
+- Manage your local series and follow their status across versions
+- Show review tags from Patchwork and gather them into your commits
+- List the comments a series has received
 
-It is intended to automate patch creation and make it a less
-error-prone process. It works with any git project that sends patches
-by email. The checkpatch and get_maintainer steps follow the U-Boot
-and Linux kernel conventions and can be skipped for projects that do
-not use them.
+It can also review patches for you, using an AI agent:
+
+- Review any Patchwork series, or your own series before you send it
+- Optionally build Gmail drafts, run Coverity or learn your writing
+  voice from past reviews
+
+The series tracking and stored reviews are kept in an optional local
+database (a ``.patman.db`` file at the top of your git tree), which
+lets patman follow a series across versions and remember past reviews.
+Creating and sending patches works without it.
+
+It is intended to automate the whole process and make it less
+error-prone. It works with any git project that sends patches by email;
+the checkpatch and get_maintainer steps follow the U-Boot and Linux
+kernel conventions and can be skipped for projects that do not use them.
 
 It is configured almost entirely by tags it finds in your commits.
 This means that you can work on a number of different branches at
@@ -221,9 +238,9 @@ kernel.org endpoint for kernel.org-hosted projects such as U-Boot.
 Quick start
 ~~~~~~~~~~~
 
-1. Install patman with the relay extra, which pulls in patatt::
+1. Install patman (patatt, which signs the messages, comes with it)::
 
-       pip install patch-manager[send-web]
+       pip install patch-manager
 
 2. Give patatt a signing key. For an existing PGP key, find its id
    with::
@@ -1379,9 +1396,35 @@ Or search for a patch by title::
 
     patman review -P 'Add SPL support for Qualcomm'
 
+Both ``-p`` and ``-P`` review just the patch found. When you know a
+patch but not the cover letter, add ``-w`` to review the whole series
+it belongs to instead::
+
+    patman review -P 'Add SPL support for Qualcomm' -w
+
 To review only specific patches by index within the series::
 
     patman review -s 497923 -i 1,3,5
+
+By default the review uses whatever your Claude default model resolves
+to. To review with a particular model instead, use ``--model``::
+
+    patman review -s 497923 --model sonnet
+
+This overrides your global Claude default for the review, so if your
+default is set to something you would rather not review with, a review
+still uses the model you name. Put ``model`` in ``.patman`` to pin it
+for a project::
+
+    [u-boot_settings]
+    model: sonnet
+
+To see the aliases ``--model`` accepts::
+
+    patman review --list-models
+
+The aliases (``opus``, ``sonnet``, ``haiku``) each select the latest
+model in their tier; a full model id works too.
 
 To create Gmail drafts threaded under the original emails::
 
@@ -1630,10 +1673,19 @@ Reviews run in parallel, each in its own child process and review
 worktree, up to ``--jobs`` (``-j``) at a time (default 4).
 
 Each review's output is buffered and printed as one block when it
-finishes, prefixed with a ``[done/total]`` counter and ending with a
-summary line::
+finishes, prefixed with a ``[done/total]`` counter. Once all the
+reviews finish, a per-series summary lists, for each reviewed series,
+its link, patch count, how many patches drew comments, how many were
+approved and the title, followed by the one-line totals::
 
+    Review summary:
+      511354: 11 patches, 0 with comments, 3 approved - Qualcomm IPQ5210 SoC bringup
+      511094: 6 patches, 5 with comments, 0 approved - Improve U-Boot's TPM handling
     Scanned: 3 new, 1 reviewed, 1 waiting, 1 skipped, 0 failed
+
+A patch counts as approved when its review approved it and as commented
+when the review requested changes; a patch the review had nothing to
+say about counts as neither.
 
 Use ``-n`` / ``--dry-run`` to see which series would be reviewed,
 waiting or skipped, without launching any reviews.

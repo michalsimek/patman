@@ -10,6 +10,17 @@ Unreleased
 
 Added
 ~~~~~
+- ``review --scan`` prints a per-series summary before its totals: one
+  line per reviewed series giving the link, patch count, how many
+  patches drew comments, how many were approved and the title.
+- ``review --model`` chooses the Claude model to review with (e.g.
+  ``sonnet``, ``opus`` or a full model id), overriding your global
+  Claude default so a review need not use a personal default such as
+  Fable. Set ``model`` in ``.patman`` to pin it for a project.
+  ``review --list-models`` prints the aliases it accepts.
+- ``review -w`` / ``--whole-series`` reviews the whole series when you
+  locate it with ``-p`` / ``-P``, instead of just the one patch. Useful
+  when you know a patch but not the cover letter.
 - ``review -V`` selects which version of a series to review when
   searching by title (``-S``); it defaults to the most recent.
 - ``send`` can post a series to a web submission endpoint (a relay, as
@@ -20,7 +31,14 @@ Added
   ``send --web-auth-new`` / ``--web-auth-verify`` register your key and
   identity with the endpoint, and ``--no-relay`` sends with git
   send-email for one run. Threading (``--thread``) and ``--in-reply-to``
-  are honoured. Needs the ``send-web`` extra (patatt).
+  are honoured. Signing uses patatt, now a core dependency.
+
+Fixed
+~~~~~
+- A branch whose name has digits in the middle, such as ``rv1106e2``,
+  now takes its version from the trailing digits like any other. Its
+  version was read as 1 rather than 2, so ``series add`` failed with
+  "suggests version 1 but Series-version tag indicates 2".
 
 0.1.0 - 2026-07-05
 ------------------

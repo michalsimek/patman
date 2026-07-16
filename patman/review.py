@@ -45,6 +45,32 @@ try:
 except ImportError:
     ClaudeAgentOptions = None
 
+# Claude model to use for the current review run, or None to let the SDK
+# use whatever model the user's Claude default resolves to. Set once at the
+# start of do_review() from --model / the 'model' setting, then read by
+# _agent_options() so every agent in the run uses the same model
+_AGENT_MODEL = None
+
+
+def _agent_options(**kwargs):
+    """Create ClaudeAgentOptions with the selected review model applied
+
+    A model chosen with --model (or the 'model' setting) overrides the
+    user's global Claude default for the whole review run, so a review
+    always uses the intended model even if the user's default is something
+    else. With no model selected the SDK default is used unchanged.
+
+    Args:
+        kwargs: Fields to pass to ClaudeAgentOptions
+
+    Returns:
+        ClaudeAgentOptions: Configured options
+    """
+    if _AGENT_MODEL:
+        kwargs.setdefault('model', _AGENT_MODEL)
+    return ClaudeAgentOptions(**kwargs)
+
+
 class ReviewContext:  # pylint: disable=R0902
     """Common context for review operations
 
@@ -245,7 +271,7 @@ async def apply_series(pwork, link, branch_name, upstream_branch,
 
     # Build the prompt and run the agent
     prompt = _build_apply_prompt(mbox_path, branch_name, upstream_branch)
-    options = ClaudeAgentOptions(
+    options = _agent_options(
         allowed_tools=['Bash', 'Read', 'Grep', 'Edit', 'Write'],
         cwd=repo_path, max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
@@ -1015,7 +1041,7 @@ Match this voice when editing the reviews:
     prompt = _REFINE_REVIEWS_PROMPT.format(drafts=drafts_text,
         voice_section=voice_section, spelling=spelling)
 
-    options = ClaudeAgentOptions(allowed_tools=[],
+    options = _agent_options(allowed_tools=[],
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
     tout.notice('Refining review drafts...')
@@ -1113,7 +1139,7 @@ async def _run_cover_review(ctx, all_commits):
     tout.notice('Reviewing series (cover letter)...')
     prompt = _build_cover_review_prompt(
         ctx, all_commits, previous_review=ctx.previous_reviews.get(0))
-    options = ClaudeAgentOptions(
+    options = _agent_options(
         allowed_tools=['Bash', 'Read', 'Grep'], cwd=ctx.repo_path,
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
     success, log = await claude_mod.run_agent_collect(prompt, options)
@@ -1166,7 +1192,7 @@ async def _run_patch_review(ctx, cmt, seq, all_commits):
     previous_review = ctx.previous_reviews.get(seq)
     prompt = _build_review_prompt(ctx, cmt.hash, seq, all_commits,
                                   previous_review)
-    options = ClaudeAgentOptions(allowed_tools=['Bash', 'Read', 'Grep'],
+    options = _agent_options(allowed_tools=['Bash', 'Read', 'Grep'],
         cwd=ctx.repo_path, max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
     success, log = await claude_mod.run_agent_collect(prompt, options)
     if not success or not log.strip():
@@ -1956,46 +1982,55 @@ def _register_series(cser, clean_name, version, link, series_data,
     if existing:
         return None
 
-    prev = cser.db.series_find_review_by_name(clean_name)
-    if prev:
-        series_id, db_name, prev_version = prev
-        tout.notice(f"Previously reviewed '{db_name}' v{prev_version};"
-                    f" adding v{version}")
-    else:
-        branch_name = _make_review_name(link, upstream)
-        series_id = cser.db.series_find_by_name(
-            branch_name, include_archived=True)
-        if not series_id:
-            # Store the cleaned title (stable across versions) as the desc,
-            # not the raw '[vN,0/M] ...' cover-letter subject, so later
-            # versions link to this series via series_find_review_by_name()
-            series_id = cser.db.series_add(branch_name, clean_name,
-                                           ups=upstream)
-        cser.db.series_set_source(series_id, 'review')
+    # Adding the series row, its version and its patches must be atomic.
+    # These are all uncommitted until the commit() below, so if anything
+    # in between raises we roll back; otherwise a freshly-added series row
+    # would linger uncommitted and be flushed by the next unrelated
+    # commit() as an orphan -- a series with no ser_ver row
+    try:
+        prev = cser.db.series_find_review_by_name(clean_name)
+        if prev:
+            series_id, db_name, prev_version = prev
+            tout.notice(f"Previously reviewed '{db_name}' v{prev_version};"
+                        f" adding v{version}")
+        else:
+            branch_name = _make_review_name(link, upstream)
+            series_id = cser.db.series_find_by_name(
+                branch_name, include_archived=True)
+            if not series_id:
+                # Store the cleaned title (stable across versions) as the
+                # desc, not the raw '[vN,0/M] ...' cover-letter subject, so
+                # later versions link via series_find_review_by_name()
+                series_id = cser.db.series_add(branch_name, clean_name,
+                                               ups=upstream)
+            cser.db.series_set_source(series_id, 'review')
 
-    svid = cser.db.ser_ver_add(series_id, version, link=str(link))
+        svid = cser.db.ser_ver_add(series_id, version, link=str(link))
 
-    patches = series_data.get('patches', [])
-    pcommits = []
-    for i, patch in enumerate(patches):
-        pcommits.append(database.Pcommit(idnum=None, seq=i,
-            subject=patch.get('name', ''), svid=svid, change_id=None,
-            state=None, patch_id=patch.get('id'), num_comments=0))
-    if pcommits:
-        cser.db.pcommit_add_list(svid, pcommits)
+        patches = series_data.get('patches', [])
+        pcommits = []
+        for i, patch in enumerate(patches):
+            pcommits.append(database.Pcommit(idnum=None, seq=i,
+                subject=patch.get('name', ''), svid=svid, change_id=None,
+                state=None, patch_id=patch.get('id'), num_comments=0))
+        if pcommits:
+            cser.db.pcommit_add_list(svid, pcommits)
 
-        # pcommit_add_list only stores seq/subject/change_id; update
-        # patch_id from the patchwork data
-        pclist = cser.db.pcommit_get_list(svid)
-        for pcm, patch in zip(pclist, patches):
-            patch_id = patch.get('id')
-            if patch_id:
-                cser.db.pcommit_update(database.Pcommit(
-                    idnum=pcm.idnum, seq=pcm.seq, subject=pcm.subject,
-                    svid=svid, change_id=pcm.change_id, state=pcm.state,
-                    patch_id=patch_id, num_comments=pcm.num_comments))
+            # pcommit_add_list only stores seq/subject/change_id; update
+            # patch_id from the patchwork data
+            pclist = cser.db.pcommit_get_list(svid)
+            for pcm, patch in zip(pclist, patches):
+                patch_id = patch.get('id')
+                if patch_id:
+                    cser.db.pcommit_update(database.Pcommit(
+                        idnum=pcm.idnum, seq=pcm.seq, subject=pcm.subject,
+                        svid=svid, change_id=pcm.change_id, state=pcm.state,
+                        patch_id=patch_id, num_comments=pcm.num_comments))
 
-    cser.commit()
+        cser.commit()
+    except Exception:
+        cser.rollback()
+        raise
     tout.notice(f"Added series '{clean_name}' v{version} to database")
     return series_id, svid
 
@@ -2538,6 +2573,11 @@ def _scan_new_versions(pwork, cser):
         async with aiohttp.ClientSession() as client:
             for ser in series.values():
                 max_ver = cser.db.series_get_max_version(ser.idnum)
+                # Without a recorded reviewed version there is nothing to
+                # compare against, so skip rather than treat every version
+                # on patchwork as newer
+                if not max_ver:
+                    continue
                 matches = await pwork.query_series(client, ser.desc)
                 newer = [pws for pws in matches
                          if pws['name'] == ser.desc and
@@ -2600,9 +2640,33 @@ def _build_review_command(args, link):
         cmd += ['--spelling', args.spelling]
     if getattr(args, 'context', None):
         cmd += ['-c', args.context]
+    if getattr(args, 'model', None):
+        cmd += ['--model', args.model]
     if getattr(args, 'create_drafts', False):
         cmd.append('--create-drafts')
     return cmd
+
+
+def _child_env():
+    """Build the environment for a 'python -m patman' child process
+
+    The child re-invokes patman with 'sys.executable -m patman'. When
+    patman is run from a source checkout rather than an installed package,
+    a fresh interpreter cannot import it, so put the directory that holds
+    the patman package on PYTHONPATH. This is where the parent found it:
+    two levels up from this module (patman/review.py -> patman -> parent).
+    For an installed patman the directory is already importable, so adding
+    it changes nothing.
+
+    Returns:
+        dict: Environment for the child process
+    """
+    env = os.environ.copy()
+    pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    existing = env.get('PYTHONPATH', '')
+    env['PYTHONPATH'] = (pkg_parent + os.pathsep + existing if existing
+                         else pkg_parent)
+    return env
 
 
 def _review_one_subprocess(args, desc, version, link):
@@ -2623,7 +2687,8 @@ def _review_one_subprocess(args, desc, version, link):
     """
     cmd = _build_review_command(args, link)
     proc = subprocess.run(cmd, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True, check=False)
+                          stderr=subprocess.STDOUT, text=True, check=False,
+                          env=_child_env())
     return ScanResult(desc, version, link, proc.returncode, proc.stdout)
 
 
@@ -2641,6 +2706,36 @@ def _print_scan_result(result, done, total):
                 f"'{result.desc}' (link {result.link}): {status} =====")
     if result.output:
         tout.notice(result.output.rstrip())
+
+
+def _review_stats(cser, link):
+    """Count patches, comments and approvals for a reviewed series version
+
+    Args:
+        cser (Cseries): Open cseries instance
+        link (str or int): Patchwork link of the reviewed version
+
+    Returns:
+        tuple or None: (num_patches, num_commented, num_approved), or None
+            if the version is not in the database. A patch is 'commented'
+            when its stored review requested changes and 'approved' when it
+            was approved; the cover letter (seq 0) is not counted, and a
+            patch the review had nothing to say about counts in neither
+    """
+    found = cser.db.series_find_by_link(link)
+    if not found:
+        return None
+    _, _, _, svid = found
+    num_patches = len(cser.db.pcommit_get_list(svid))
+    approved = commented = 0
+    for rev in cser.db.review_get_for_version(svid):
+        if not rev.seq:
+            continue
+        if rev.approved:
+            approved += 1
+        else:
+            commented += 1
+    return num_patches, commented, approved
 
 
 def _do_scan(args, pwork, cser):
@@ -2696,6 +2791,7 @@ def _do_scan(args, pwork, cser):
         tout.notice(f'Launching {total} review(s), {min(jobs, total)} '
                     'at a time')
         done = 0
+        ok_links = set()
         with futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             pending = [pool.submit(_review_one_subprocess, args, new.desc,
                                    new.version, new.link)
@@ -2706,6 +2802,23 @@ def _do_scan(args, pwork, cser):
                 _print_scan_result(result, done, total)
                 if result.returncode:
                     failed += 1
+                else:
+                    ok_links.add(result.link)
+
+        # Long-form summary of what each review found, in the order the
+        # versions were listed above, before the one-line totals
+        summarised = [new for new in to_review if new.link in ok_links]
+        if summarised:
+            tout.notice('')
+            tout.notice('Review summary:')
+            for new in summarised:
+                stats = _review_stats(cser, new.link)
+                if stats is None:
+                    continue
+                n_patches, commented, approved = stats
+                tout.notice(
+                    f'  {new.link}: {n_patches} patches, {commented} with '
+                    f'comments, {approved} approved - {new.desc}')
 
     tout.notice(f'Scanned: {len(found)} new, {total - failed} reviewed, '
                 f'{waiting} waiting, {skipped} skipped, {failed} failed')
@@ -2757,6 +2870,36 @@ def _do_relink(args, cser):
     return 0
 
 
+# Model aliases accepted by --model, most to least capable. Each resolves
+# to the latest model in its tier, so this list does not go stale as new
+# generations ship. The Claude SDK and CLI expose no way to enumerate
+# models, and the REST models API needs an API key that need not match the
+# subscription a review authenticates with, so a fixed alias list is both
+# the most reliable answer and exactly what --model expects
+_MODEL_ALIASES = (
+    ('opus', 'Most capable; best for a thorough review'),
+    ('sonnet', 'Balanced capability and speed'),
+    ('haiku', 'Fastest and cheapest; light reviews'),
+)
+
+
+def _list_models():
+    """Print the model aliases that --model accepts
+
+    Returns:
+        int: 0
+    """
+    print("Models you can pass to --model (or set as the 'model' setting):")
+    print()
+    for alias, desc in _MODEL_ALIASES:
+        print(f'  {alias:<8} {desc}')
+    print()
+    print('Each alias selects the latest model in its tier. A full model')
+    print('id (e.g. claude-sonnet-5) also works. With none set, your global')
+    print('Claude default is used.')
+    return 0
+
+
 def do_review(args, pwork, cser):
     """Run the review command
 
@@ -2768,6 +2911,14 @@ def do_review(args, pwork, cser):
         pwork (Patchwork): Configured patchwork instance
         cser (Cseries): Open cseries instance
     """
+    if getattr(args, 'list_models', False):
+        return _list_models()
+
+    # Fix the model for the whole run, so every agent uses the one chosen
+    # with --model / the 'model' setting rather than the user's default
+    global _AGENT_MODEL
+    _AGENT_MODEL = getattr(args, 'model', None)
+
     if args.learn_voice:
         return _do_learn_voice(args, pwork)
 
@@ -2787,13 +2938,18 @@ def do_review(args, pwork, cser):
         raise ValueError("Please provide -s <series>, -S <title>, "
             "-p <patch-id> or -P <patch-title>")
 
+    # -p/-P locate the series via one of its patches. By default the review
+    # is then restricted to just that patch; -w reviews the whole series
+    whole = getattr(args, 'whole_series', False)
     link = args.pw_link
     if not link and has_patch:
         link, patch_seq = lookup_patch_series(pwork, args.patch)
-        args.patches = str(patch_seq)
+        if not whole:
+            args.patches = str(patch_seq)
     elif not link and has_patch_title:
         link, patch_seq = search_patch(pwork, args.patch_title)
-        args.patches = str(patch_seq)
+        if not whole:
+            args.patches = str(patch_seq)
     elif not link:
         link = search_series(pwork, args.title, getattr(args, 'version', None))
 
@@ -2917,7 +3073,7 @@ async def learn_voice(vp):
     tools.write_file(reviews_path, combined, binary=False)
 
     prompt = _VOICE_PROMPT.format(emails=f'(see file: {reviews_path})')
-    options = ClaudeAgentOptions(allowed_tools=['Read'],
+    options = _agent_options(allowed_tools=['Read'],
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
     success, result = await claude_mod.run_agent_collect(prompt, options)
@@ -3009,7 +3165,7 @@ async def refine_voice(draft_body, sent_body):
 
     prompt = _REFINE_PROMPT.format(draft_path=draft_path,
         sent_path=sent_path, voice_path=VOICE_PATH)
-    options = ClaudeAgentOptions(allowed_tools=['Read'],
+    options = _agent_options(allowed_tools=['Read'],
         max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
     tout.notice('Analysing draft vs sent differences...')
@@ -3112,7 +3268,7 @@ async def handle_reply(ctx, review_body, reply_from, reply_body):
     prompt = _REPLY_PROMPT.format(review_path=review_path,
         reply_path=reply_path, reply_from=reply_from,
         spelling=ctx.spelling)
-    options = ClaudeAgentOptions(allowed_tools=['Bash', 'Read', 'Grep'],
+    options = _agent_options(allowed_tools=['Bash', 'Read', 'Grep'],
         cwd=ctx.repo_path, max_buffer_size=claude_mod.MAX_BUFFER_SIZE)
 
     success, log = await claude_mod.run_agent_collect(prompt, options)

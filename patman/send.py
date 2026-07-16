@@ -170,13 +170,8 @@ def send_via_relay(series, cover_fname, patch_files, cc_file, endpoint,
         int: Number of messages sent (0 for a dry run)
 
     Raises:
-        ValueError: if patatt is not available or the endpoint errors
+        ValueError: if the endpoint errors
     """
-    if not relay.check_available():
-        raise ValueError(
-            'patatt is required to send via a web relay; install it with '
-            "'pip install patch-manager[send-web]'")
-
     cc_map = _parse_cc_file(cc_file)
     to_list = gitutil.build_email_list(series.get('to') or [], settings.alias)
 
