@@ -8,6 +8,9 @@ the project follows `Semantic Versioning <https://semver.org/>`_.
 Unreleased
 ----------
 
+0.2.0 - 2026-07-15
+------------------
+
 Added
 ~~~~~
 - ``review --scan`` prints a per-series summary before its totals: one
